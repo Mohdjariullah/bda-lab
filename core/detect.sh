@@ -180,7 +180,7 @@ ensure_java() {
       chosen=$(printf '%s\n' "$list" | sort -n | head -n1 | cut -f2); src="only JDK available"
     fi
     # keep the current JAVA_HOME when it is valid and has the same major version
-    if [ -x "$cur/bin/java" ] && [ "$(_java_major "$cur")" = "$(_java_major "$chosen")" ]; then
+    if [ -n "$cur" ] && [ -x "$cur/bin/java" ] && [ "$(_java_major "$cur")" = "$(_java_major "$chosen")" ]; then
       chosen=$(readlink -f "$cur"); src=env
     fi
     if [ "$(printf '%s\n' "$list" | wc -l)" -gt 1 ]; then

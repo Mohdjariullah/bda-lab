@@ -87,6 +87,11 @@ ensure_hadoop() {
   [ -d "$HADOOP_CONF_DIR" ] || die "Hadoop configuration directory missing: $HADOOP_CONF_DIR"
   export HADOOP_MAPRED_HOME="$HADOOP_HOME" HADOOP_COMMON_HOME="$HADOOP_HOME" HADOOP_HDFS_HOME="$HADOOP_HOME"
   export YARN_HOME="$HADOOP_HOME" HADOOP_COMMON_LIB_NATIVE_DIR="$HADOOP_HOME/lib/native"
+  if [ "$(id -u)" -eq 0 ]; then
+    # Hadoop 3 refuses to start its daemons as root unless the user is declared
+    export HDFS_NAMENODE_USER=root HDFS_DATANODE_USER=root HDFS_SECONDARYNAMENODE_USER=root
+    export YARN_RESOURCEMANAGER_USER=root YARN_NODEMANAGER_USER=root
+  fi
   export HADOOP_OPTS="${HADOOP_OPTS:-} -Djava.library.path=$HADOOP_HOME/lib/native"
 
   check "Hadoop configuration ($HADOOP_CONF_DIR)"

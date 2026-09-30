@@ -35,6 +35,8 @@ chmod 700 "$STATE_DIR" 2>/dev/null || true
 : "${MAX_FIX_ATTEMPTS:=2}"
 : "${LAB9_STREAM_PORT:=9999}"
 : "${KAFKA_PORT:=9092}"
+: "${AUTO_SETUP:=1}"
+: "${STACK_DIR:=$HOME/bigdata_stack}"
 
 # ---- lab table -------------------------------------------------------------
 LAB_IDS=(01 02 03 04a 04b 05 06 07 08 09 10)
@@ -52,6 +54,7 @@ lab_title_for() {
     09)  echo "Lab 9  - Spark Structured Streaming" ;;
     10)  echo "Lab 10 - Kafka Event Streaming" ;;
     diag) echo "System Diagnostics" ;;
+    setup) echo "Setup - Install All Lab Software" ;;
     *)   echo "Lab $1" ;;
   esac
 }
@@ -60,6 +63,7 @@ lab_dir_for() {
     04a) echo "$LABS_DIR/lab04/wordcount" ;;
     04b) echo "$LABS_DIR/lab04/weather" ;;
     diag) echo "$CORE_DIR/diag" ;;
+    setup) echo "$CORE_DIR/setup" ;;
     *)   echo "$LABS_DIR/lab$1" ;;
   esac
 }

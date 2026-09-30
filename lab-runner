@@ -44,6 +44,7 @@ show_menu() {
   done
   echo
   echo "    A. Run All Labs"
+  echo "    S. Setup - install missing lab software"
   echo "    D. System Diagnostics"
   echo "    L. View a lab log"
   echo "    R. Rescan environment"
@@ -147,8 +148,44 @@ menu_to_id() {
     5|05)   echo 05;;  6|06) echo 06;;  7|07) echo 07;;  8|08) echo 08;;  9|09) echo 09;;
     10)     echo 10;;
     diag)   echo diag;;
+    setup|s|install) echo setup;;
     *)      echo "";;
   esac
+}
+
+# missing_software : names of the tools the scan did not find
+missing_software() {
+  local m=""
+  [ "$ENV_JAVA" = 1 ]   || m="$m java"
+  [ "$ENV_HADOOP" = 1 ] || m="$m hadoop"
+  [ "$ENV_PIG" = 1 ]    || m="$m pig"
+  [ "$ENV_HIVE" = 1 ]   || m="$m hive"
+  [ "$ENV_SPARK" = 1 ]  || m="$m spark"
+  [ "$ENV_KAFKA" = 1 ]  || m="$m kafka"
+  [ "$ENV_MONGO" = 1 ]  || m="$m mongodb"
+  echo "${m# }"
+}
+
+# auto_setup : install missing software without the user asking. Waits 10 s so
+# it can be skipped. A failed attempt is not repeated on every start: it is
+# remembered in state/setup.tried and only the S menu entry retries it.
+auto_setup() {
+  [ "${AUTO_SETUP:-1}" = 1 ] || return 0
+  local miss; miss=$(missing_software)
+  [ -n "$miss" ] || { rm -f "$STATE_DIR/setup.tried"; return 0; }
+  [ "$(cat "$STATE_DIR/setup.tried" 2>/dev/null)" = "$miss" ] && return 0
+  echo
+  warn "Missing lab software: $miss"
+  info "It will be installed automatically (about 2 GB, 10 to 30 minutes)."
+  local ans=""
+  read -r -t 10 -p "    Starting in 10 seconds. Type S and press ENTER to skip: " ans
+  echo
+  case "$ans" in s|S) info "Skipped. Choose S in the menu when you want to install."; return 0 ;; esac
+  echo "$miss" > "$STATE_DIR/setup.tried"
+  run_lab setup
+  rescan
+  [ -z "$(missing_software)" ] && rm -f "$STATE_DIR/setup.tried"
+  return 0
 }
 run_selection() {   # run_selection "04a 04b"
   local id
@@ -168,20 +205,23 @@ usage() {
   echo "       ./lab-runner <lab>        run one lab: 1 2 3 4 4a 4b 5 6 7 8 9 10"
   echo "       ./lab-runner all          run every lab in order"
   echo "       ./lab-runner diag         diagnostics report only"
+  echo "       ./lab-runner setup        install the missing lab software"
 }
 if [ -n "${1:-}" ]; then
   case "$1" in -h|--help|help) usage; exit 0 ;; esac
   scan_environment
   case "$(echo "$1" | tr 'A-Z' 'a-z')" in
-    all|a)  run_all ;;
+    all|a)  auto_setup; run_all ;;
     diag|d) run_lab diag ;;
-    *)      sel=$(menu_to_id "$1"); [ -n "$sel" ] || { echo "Unknown lab: $1"; usage; exit 2; }; run_selection "$sel" ;;
+    setup|s|install) run_lab setup; [ "$LAST_STATUS" = OK ] ;;
+    *)      sel=$(menu_to_id "$1"); [ -n "$sel" ] || { echo "Unknown lab: $1"; usage; exit 2; }; auto_setup; run_selection "$sel" ;;
   esac
-  exit 0
+  exit $?
 fi
 
 echo "Scanning the system for installed tools (first run may take a moment)..."
 scan_environment
+auto_setup
 
 while :; do
   show_menu
@@ -190,6 +230,7 @@ while :; do
     0|q|exit) echo "Bye."; exit 0 ;;
     a|all)    run_all ;;
     d|diag)   run_lab diag ;;
+    s|setup)  run_lab setup; rescan ;;
     l|log)    view_log; continue ;;
     r|rescan) rescan; continue ;;
     *)
