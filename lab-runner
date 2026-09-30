@@ -1,0 +1,204 @@
+#!/usr/bin/env bash
+# lab-runner - Big Data Analytics Lab Runner (launcher window)
+#
+#   ./lab-runner            interactive menu
+#   ./lab-runner 5          run Lab 5 directly (also 4a, 4b, all, diag)
+#
+# Each lab opens in its own terminal window. This window shows the menu,
+# live progress lines, and "Lab N done" / "Lab N failed" at the end.
+
+RUNNER_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+. "$RUNNER_DIR/core/common.sh"
+. "$RUNNER_DIR/core/terminal.sh"
+. "$RUNNER_DIR/core/detect.sh"
+
+chmod +x "$RUNNER_DIR/lab-runner" "$CORE_DIR"/*.sh "$CORE_DIR"/diag/run.sh \
+         "$LABS_DIR"/*/run.sh "$LABS_DIR"/lab04/*/run.sh 2>/dev/null
+
+mark() { [ "$1" = 1 ] && printf '%s[✓]%s' "$C_GREEN" "$C_RESET" || printf '%s[✗]%s' "$C_RED" "$C_RESET"; }
+
+show_menu() {
+  clear
+  echo "$LINE"
+  echo "        BIG DATA ANALYTICS - LAB RUNNER"
+  echo "$LINE"
+  echo
+  echo "Environment status:"
+  printf '  %s Java\n'               "$(mark "$ENV_JAVA")"
+  printf '  %s Python\n'             "$(mark "$ENV_PYTHON")"
+  printf '  %s Hadoop\n'             "$(mark "$ENV_HADOOP")"
+  printf '  %s HDFS configuration\n' "$(mark "$ENV_HDFSCONF")"
+  printf '  %s Pig\n'                "$(mark "$ENV_PIG")"
+  printf '  %s MongoDB\n'            "$(mark "$ENV_MONGO")"
+  printf '  %s Hive\n'               "$(mark "$ENV_HIVE")"
+  printf '  %s Spark\n'              "$(mark "$ENV_SPARK")"
+  printf '  %s Kafka\n'              "$(mark "$ENV_KAFKA")"
+  echo
+  echo "$LINE2"
+  echo "Select a Lab"
+  echo "$LINE2"
+  echo
+  local id
+  for id in "${LAB_IDS[@]}"; do
+    printf '  %3s. %s\n' "$(menu_key "$id")" "$(lab_title_for "$id")"
+  done
+  echo
+  echo "    A. Run All Labs"
+  echo "    D. System Diagnostics"
+  echo "    L. View a lab log"
+  echo "    R. Rescan environment"
+  echo "   0. Exit"
+  echo
+}
+
+# ---- run one lab in a new window and follow its progress -------------------
+wait_for_lab() {
+  local id=$1
+  local pf="$STATE_DIR/lab$id.progress" sf="$STATE_DIR/lab$id.status" pidf="$STATE_DIR/lab$id.pid"
+  local shown=0 total pid started=0 ticks=0
+  while :; do
+    if [ -f "$pf" ]; then
+      total=$(wc -l < "$pf")
+      if [ "$total" -gt "$shown" ]; then
+        sed -n "$((shown + 1)),${total}p" "$pf" | sed 's/^/    /'
+        shown=$total
+      fi
+    fi
+    [ -f "$sf" ] && break
+    if [ -f "$pidf" ]; then
+      started=1
+      pid=$(cat "$pidf" 2>/dev/null)
+      if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+        sleep 1
+        [ -f "$sf" ] && break
+        echo "    [✗] The lab window closed before the lab finished."
+        break
+      fi
+    elif [ "$started" = 0 ] && [ "$ticks" -gt 60 ]; then
+      echo "    [✗] The lab window did not start (30s). Check that a terminal emulator is installed."
+      break
+    fi
+    sleep 0.5
+    ticks=$((ticks + 1))
+  done
+}
+
+run_lab() {
+  local id=$1 title name st t0 t1
+  title=$(lab_title_for "$id"); name=$(lab_short_name "$id")
+  rm -f "$STATE_DIR/lab$id.progress" "$STATE_DIR/lab$id.status" "$STATE_DIR/lab$id.pid"
+  : > "$STATE_DIR/lab$id.progress"
+  echo
+  echo "$LINE2"
+  echo "${C_BOLD}$title${C_RESET}"
+  t0=$(date +%s)
+  if spawn_terminal "$title" "$CORE_DIR/labshell.sh" "$id"; then
+    info "Opened a new terminal window for the lab. Watch the commands there."
+    echo "    Progress:"
+    wait_for_lab "$id"
+  else
+    warn "No graphical terminal found. Running the lab in this window."
+    LAB_INLINE=1 bash "$CORE_DIR/labshell.sh" "$id"
+  fi
+  t1=$(date +%s)
+  st=$(cat "$STATE_DIR/lab$id.status" 2>/dev/null)
+  if [ "$st" = OK ]; then
+    echo "${C_GREEN}${C_BOLD}[✓] $name done${C_RESET}  ($((t1 - t0))s)"
+  else
+    echo "${C_RED}${C_BOLD}[✗] $name failed${C_RESET}  ($((t1 - t0))s)   log: logs/lab$id.log"
+  fi
+  LAST_STATUS=$st
+}
+
+run_all() {
+  local id summary="" ans
+  for id in "${LAB_IDS[@]}"; do
+    run_lab "$id"
+    summary="$summary$(printf '  %-8s %s\n' "$(lab_short_name "$id")" "${LAST_STATUS:-FAIL}")"$'\n'
+    if [ "$LAST_STATUS" != OK ]; then
+      read -rp "    Continue with the next lab? [Y/n] " ans
+      case "$ans" in n|N) break ;; esac
+    fi
+  done
+  echo; echo "$LINE"; echo " RUN ALL - SUMMARY"; echo "$LINE"; printf '%s' "$summary"
+}
+
+view_log() {
+  local ans id f
+  read -rp "Lab number (1, 2, 3, 4a, 4b, 5 ... 10) or diag: " ans
+  id=$(menu_to_id "$ans"); [ -n "$id" ] || id=$ans
+  id=${id%% *}
+  f="$LOG_DIR/lab$id.log"
+  if [ -f "$f" ]; then
+    if have less; then less -R "$f"; else cat "$f"; fi
+  else
+    warn "No log for lab $id yet"
+  fi
+}
+
+# menu_key ID : what the user types for a lab ("5" for 05, "4a" for 04a)
+menu_key() { echo "$1" | sed -E 's/^0//'; }
+# menu_to_id INPUT : lab id for what the user typed (empty if not a lab). "4" means 4a+4b.
+menu_to_id() {
+  case "$(echo "$1" | tr 'A-Z' 'a-z')" in
+    1|01)   echo 01;;  2|02) echo 02;;  3|03) echo 03;;
+    4|04)   echo "04a 04b";;
+    4a|04a) echo 04a;; 4b|04b) echo 04b;;
+    5|05)   echo 05;;  6|06) echo 06;;  7|07) echo 07;;  8|08) echo 08;;  9|09) echo 09;;
+    10)     echo 10;;
+    diag)   echo diag;;
+    *)      echo "";;
+  esac
+}
+run_selection() {   # run_selection "04a 04b"
+  local id
+  for id in $1; do run_lab "$id"; done
+}
+
+rescan() {
+  echo "Scanning the system for installed tools..."
+  rm -f "$STATE_DIR/detected.env"
+  unset DETECTED_JAVA_HOME DETECTED_HADOOP_HOME DETECTED_PIG_HOME DETECTED_HIVE_HOME DETECTED_SPARK_HOME DETECTED_KAFKA_HOME
+  scan_environment
+}
+
+# ---- main ------------------------------------------------------------------
+usage() {
+  echo "Usage: ./lab-runner              interactive menu"
+  echo "       ./lab-runner <lab>        run one lab: 1 2 3 4 4a 4b 5 6 7 8 9 10"
+  echo "       ./lab-runner all          run every lab in order"
+  echo "       ./lab-runner diag         diagnostics report only"
+}
+if [ -n "${1:-}" ]; then
+  case "$1" in -h|--help|help) usage; exit 0 ;; esac
+  scan_environment
+  case "$(echo "$1" | tr 'A-Z' 'a-z')" in
+    all|a)  run_all ;;
+    diag|d) run_lab diag ;;
+    *)      sel=$(menu_to_id "$1"); [ -n "$sel" ] || { echo "Unknown lab: $1"; usage; exit 2; }; run_selection "$sel" ;;
+  esac
+  exit 0
+fi
+
+echo "Scanning the system for installed tools (first run may take a moment)..."
+scan_environment
+
+while :; do
+  show_menu
+  read -rp "Enter choice: " choice
+  case "$(echo "$choice" | tr 'A-Z' 'a-z')" in
+    0|q|exit) echo "Bye."; exit 0 ;;
+    a|all)    run_all ;;
+    d|diag)   run_lab diag ;;
+    l|log)    view_log; continue ;;
+    r|rescan) rescan; continue ;;
+    *)
+      sel=$(menu_to_id "$choice")
+      if [ -z "$sel" ]; then echo "Invalid choice. Type a lab number (1 to 10, 4a, 4b), A, D, L, R or 0."; sleep 2; continue; fi
+      run_selection "$sel"
+      ;;
+  esac
+  echo
+  read -rp "Press ENTER to return to the Lab Runner..." _
+  scan_environment
+done

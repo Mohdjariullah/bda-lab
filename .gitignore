@@ -1,0 +1,18 @@
+# runtime, not source
+logs/*
+results/*
+state/*
+!logs/.keep
+!results/.keep
+!state/.keep
+
+# lab work dirs and caches
+bigdata_labs/
+__pycache__/
+*.pyc
+*.class
+*.jar
+
+# editor and OS noise
+*.swp
+.DS_Store
