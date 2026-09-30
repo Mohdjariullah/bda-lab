@@ -51,7 +51,7 @@ You need:
 | Item | Why | How to check |
 |---|---|---|
 | Ubuntu (or another Debian-based Linux) with a desktop | The tool opens new terminal windows | You can see the desktop and the app grid |
-| The lab software from your college (Java, Hadoop, Pig, Hive, Spark, Kafka, MongoDB) | The tool **finds and fixes** these. It does **not** download them | Your lab PC already has them. Step 4 shows what is found |
+| The lab software (Java, Hadoop, Pig, Hive, Spark, Kafka, MongoDB) | The tool **finds** what is installed and **installs what is missing** (about 2 GB, 10 to 30 minutes, once) | Nothing to do. The menu shows what is found |
 | Your Linux password | Only for steps that need administrator rights | The password you use to log in |
 | Internet | Only to download this tool (Step 3), and to install a missing Python package | Open any web page |
 
@@ -115,7 +115,8 @@ What this command does:
 
 - It makes all the scripts executable.
 - It adds a **Big Data Lab Runner** icon to your app grid (and to your Desktop).
-- It does not install any software and does not change your system.
+- It does not install any software itself. The software is installed the first
+  time you start the menu (see "Automatic setup" below).
 
 At the end it asks:
 
@@ -127,6 +128,20 @@ Press **Enter** to open the menu now.
 
 The first start scans your PC for Java, Hadoop, Pig, Hive, Spark, Kafka and
 MongoDB. This can take up to one minute. Then the menu opens (see Step 6).
+
+**Automatic setup.** If something is missing, the tool says
+`Missing lab software: ...` and starts installing it by itself after 10
+seconds (type `S` and press ENTER within 10 seconds to skip). It installs:
+
+- Java 8, Python and curl with `apt` (asks for your password unless you are root).
+- Hadoop 3.3.6, Pig 0.17.0, Hive 3.1.3, Spark 3.5.3 and Kafka 3.6.2 from
+  Apache into `~/bigdata_stack` (no administrator rights needed).
+- MongoDB from the MongoDB `apt` repository (Ubuntu 20.04, 22.04, 24.04).
+
+Anything already installed is skipped. You need internet and about 7 GB of
+free disk space. To run it again later, choose **S** in the menu or type
+`./lab-runner setup`. To turn the automatic start off, set `AUTO_SETUP=0` in
+`config/environment.conf`.
 
 ## 5. Start the tool next time
 
@@ -315,20 +330,29 @@ Many labs do not need the password at all. Then this window does not open.
 
 ## 9. When the lab is finished
 
-At the end of the lab window you see:
+The lab window is plain. It shows only the commands that were run
+(`$ command`), what they printed, and errors (`[✗]`). There is no header and
+no "completed" message, so the window simply stops printing.
+
+If the lab has its own window, it stays open until you press **Enter**
+(nothing is printed while it waits), so you can read the output.
+
+The **launcher** window tells you the result:
 
 ```
-============================================================
- LAB 5  - APACHE PIG JAVA UDF - COMPLETED SUCCESSFULLY
-============================================================
-[✓] Lab 5 done
-Finished: Thu Oct  1 10:15:42 EDT 2026
-Full log: /home/student/bda-lab/logs/lab05_20261001_101520.log
-
-Press ENTER to close this window...
+[✓] Lab 5 done  (24s)
 ```
 
-Press **Enter** to close the lab window. The launcher also shows `Lab 5 done`.
+or, when something failed:
+
+```
+[✗] Lab 5 failed  (12s)   log: logs/lab05.log
+```
+
+The full story (every check, fix and step) is always saved in the log file
+`logs/lab05.log`. To see the extra lines in the lab window too, set
+`LAB_RAW_OUTPUT=0` in `config/environment.conf`.
+
 Press **Enter** in the launcher to go back to the menu.
 
 **Where to find your work:**

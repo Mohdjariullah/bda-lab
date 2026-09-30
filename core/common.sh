@@ -83,15 +83,17 @@ LINE2="------------------------------------------------------------"
 
 # ---- printing --------------------------------------------------------------
 # every status line is also written to the lab log, so the log alone tells the story
-hr()      { echo "$LINE"; }
-banner()  { echo; echo "$LINE"; printf ' %s\n' "$@"; echo "$LINE"; _logline ""; _logline "$LINE"; _logline " $*"; _logline "$LINE"; }
-ok()      { echo "${C_GREEN}[✓]${C_RESET} $*";   _logline "[OK] $*"; }
+# RAW_OUTPUT=1 (set by labshell.sh, see LAB_RAW_OUTPUT) keeps the lab window to
+# commands, tool output and failures. Everything else is written to the log only.
+hr()      { [ "${RAW_OUTPUT:-0}" = 1 ] || echo "$LINE"; }
+banner()  { [ "${RAW_OUTPUT:-0}" = 1 ] || { echo; echo "$LINE"; printf ' %s\n' "$@"; echo "$LINE"; }; _logline ""; _logline "$LINE"; _logline " $*"; _logline "$LINE"; }
+ok()      { [ "${RAW_OUTPUT:-0}" = 1 ] || echo "${C_GREEN}[✓]${C_RESET} $*";   _logline "[OK] $*"; }
 fail()    { echo "${C_RED}[✗]${C_RESET} $*";     _logline "[FAIL] $*"; }
-warn()    { echo "${C_YELLOW}[!]${C_RESET} $*";  _logline "[WARN] $*"; }
-info()    { echo "${C_BLUE}[→]${C_RESET} $*";    _logline "[INFO] $*"; }
-fixmsg()  { echo "${C_CYAN}[FIX]${C_RESET} $*";  _logline "[FIX] $*"; }
-check()   { echo; echo "${C_BOLD}[CHECK]${C_RESET} $*"; _logline ""; _logline "[CHECK] $*"; }
-step()    { echo; echo "${C_BOLD}[STEP $1] $2${C_RESET}"; _logline ""; _logline "[STEP $1] $2"; }
+warn()    { [ "${RAW_OUTPUT:-0}" = 1 ] || echo "${C_YELLOW}[!]${C_RESET} $*";  _logline "[WARN] $*"; }
+info()    { [ "${RAW_OUTPUT:-0}" = 1 ] || echo "${C_BLUE}[→]${C_RESET} $*";    _logline "[INFO] $*"; }
+fixmsg()  { [ "${RAW_OUTPUT:-0}" = 1 ] || echo "${C_CYAN}[FIX]${C_RESET} $*";  _logline "[FIX] $*"; }
+check()   { [ "${RAW_OUTPUT:-0}" = 1 ] || { echo; echo "${C_BOLD}[CHECK]${C_RESET} $*"; }; _logline ""; _logline "[CHECK] $*"; }
+step()    { [ "${RAW_OUTPUT:-0}" = 1 ] || { echo; echo "${C_BOLD}[STEP $1] $2${C_RESET}"; }; _logline ""; _logline "[STEP $1] $2"; }
 show()    { printf '\n%s$ %s%s\n' "$C_BOLD" "$*" "$C_RESET"; _logline ""; _logline "$ $*"; }
 
 # progress lines are read by the launcher window
@@ -151,7 +153,7 @@ run_fix() {
     [ "$rc" -eq 0 ] && return 0
     n=$((n + 1))
     [ "$n" -gt "$MAX_FIX_ATTEMPTS" ] && return "$rc"
-    warn "Command failed (exit $rc). Trying automatic fix ($n/$MAX_FIX_ATTEMPTS)..."
+    fail "Command failed (exit $rc). Trying automatic fix ($n/$MAX_FIX_ATTEMPTS)..."
     "$fixfn" "$rc" || return "$rc"
     info "Re-running the command..."
   done

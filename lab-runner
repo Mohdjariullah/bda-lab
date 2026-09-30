@@ -176,7 +176,7 @@ auto_setup() {
   [ "$(cat "$STATE_DIR/setup.tried" 2>/dev/null)" = "$miss" ] && return 0
   echo
   warn "Missing lab software: $miss"
-  info "It will be installed automatically (about 2 GB, 10 to 30 minutes)."
+  info "It will be installed automatically (everything together is about 2 GB and takes 10 to 30 minutes)."
   local ans=""
   read -r -t 10 -p "    Starting in 10 seconds. Type S and press ENTER to skip: " ans
   echo

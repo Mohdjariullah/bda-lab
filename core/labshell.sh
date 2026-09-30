@@ -14,6 +14,10 @@ LAB_ID="${1:?usage: labshell.sh <lab-id>}"
 . "$RUNNER_DIR/core/hadoop.sh"
 . "$RUNNER_DIR/core/spark.sh"
 
+# raw lab window: commands, tool output and failures only (config: LAB_RAW_OUTPUT)
+RAW_OUTPUT="${LAB_RAW_OUTPUT:-1}"
+export RAW_OUTPUT
+
 LAB_DIR="$(lab_dir_for "$LAB_ID")"
 LAB_TITLE="$(lab_title_for "$LAB_ID")"
 LAB_NAME="$(lab_short_name "$LAB_ID")"
@@ -45,22 +49,30 @@ finish() {
     banner "$(echo "$LAB_TITLE" | tr 'a-z' 'A-Z') - FAILED"
     note_fail "$LAB_NAME failed. Log: $LAB_LOG"
   fi
-  echo "Finished: $(date)"
-  echo "Full log: $LAB_LOG"
+  _logline "Finished: $(date)"
+  _logline "Full log: $LAB_LOG"
+  [ "$RAW_OUTPUT" = 1 ] || { echo "Finished: $(date)"; echo "Full log: $LAB_LOG"; }
   write_status "$LAB_RESULT"
   rm -f "$PID_FILE"
   if [ -z "${LAB_INLINE:-}" ] && [ -r /dev/tty ]; then
-    echo
-    read -rp "Press ENTER to close this window..." _ </dev/tty 2>/dev/null || true
+    # raw mode: no text, but the window still waits so the output can be read
+    if [ "$RAW_OUTPUT" = 1 ]; then
+      read -r _ </dev/tty 2>/dev/null || true
+    else
+      echo
+      read -rp "Press ENTER to close this window..." _ </dev/tty 2>/dev/null || true
+    fi
   fi
 }
 trap finish EXIT
 trap 'LAB_RESULT=FAIL; exit 130' INT TERM HUP
 
 banner "$(echo "$LAB_TITLE" | tr 'a-z' 'A-Z')"
-echo "Started : $(date)"
-echo "User    : $(id -un)@$(hostname)"
-echo "Log     : $LAB_LOG"
+if [ "$RAW_OUTPUT" != 1 ]; then
+  echo "Started : $(date)"
+  echo "User    : $(id -un)@$(hostname)"
+  echo "Log     : $LAB_LOG"
+fi
 { echo "# $LAB_TITLE"; echo "# started $(date) by $(id -un)@$(hostname)"; } >> "$LAB_LOG"
 
 [ -f "$LAB_DIR/run.sh" ] || die "Missing $LAB_DIR/run.sh"

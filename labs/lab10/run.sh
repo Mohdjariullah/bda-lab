@@ -44,7 +44,9 @@ lab_main() {
 
   step 5 "Start the consumer in the background (it listens until stopped)"
   show "python3 consumer.py > consumer.log &"
-  python3 consumer.py > consumer.log 2>&1 &
+  # unbuffered: python holds print() output back when it goes to a file, so the
+  # "Received Event" lines would only appear when the consumer exits
+  PYTHONUNBUFFERED=1 python3 consumer.py > consumer.log 2>&1 &
   local cpid=$!
   bg_track "$cpid"
   sleep 4
