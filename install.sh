@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # install.sh - one-command install of the Big Data Lab Runner from a git clone.
 #
-#   git clone https://github.com/mohdjariullah/bigdata-lab-runner.git
-#   cd bigdata-lab-runner
+#   git clone https://github.com/Mohdjariullah/bda-lab.git
+#   cd bda-lab
 #   ./install.sh            # makes everything executable, adds a desktop launcher, opens the menu
 #
 # It changes nothing on the system. It only sets file permissions inside this
