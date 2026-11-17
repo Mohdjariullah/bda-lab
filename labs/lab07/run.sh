@@ -164,7 +164,10 @@ lab_main() {
   _hive_guava_fix || true
 
   lab_workdir lab07
-  rm -rf src classes; cp -r "$LAB_DIR/src" .
+  # only the lab's own files are replaced (the folder may be the home folder)
+  mkdir -p src classes
+  cp "$LAB_DIR"/src/*.java src/
+  rm -rf classes/com/lab/hive
   cp "$LAB_DIR/emp_data.csv" "$LAB_DIR/lab7a_hiveql.hql" "$LAB_DIR/lab7b_udf.hql" .
   sed -i "s#/home/hadoop/emp_data.csv#$LAB_WORK/emp_data.csv#" lab7a_hiveql.hql
   sed -i "s#/path/to/MaskSalaryUDF.jar#$LAB_WORK/MaskSalaryUDF.jar#" lab7b_udf.hql
@@ -208,6 +211,7 @@ lab_main() {
     echo "-- $q2"
     _hive_quiet "USE lab_hive; ADD JAR $LAB_WORK/MaskSalaryUDF.jar; CREATE TEMPORARY FUNCTION mask_sal AS 'com.lab.hive.MaskSalaryUDF'; $q2"
   } > "$LAB_RESULTS/hive_output.txt" 2>/dev/null
-  run cat "$LAB_RESULTS/hive_output.txt"
+  # the copy for the results folder is not a lab command: shown only in verbose mode
+  if [ "${RAW_OUTPUT:-0}" = 1 ]; then cat "$LAB_RESULTS/hive_output.txt" >> "${LAB_LOG:-/dev/null}"; else run cat "$LAB_RESULTS/hive_output.txt"; fi
   note_ok "Hive table created and loaded, aggregation run, UDF mask_sal applied"
 }

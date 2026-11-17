@@ -30,6 +30,7 @@ lab_main() {
 
   step 5 "Output"
   hdfs_cmd -cat /wc/output/part-r-00000
-  hdfs_cmd -get -f /wc/output/part-r-00000 "$LAB_RESULTS/wordcount_output.txt"
+  # copy for the results folder (not a lab command, so not shown)
+  "${HDFS_CLI[@]}" -get -f /wc/output/part-r-00000 "$LAB_RESULTS/wordcount_output.txt" >> "${LAB_LOG:-/dev/null}" 2>&1
   note_ok "WordCount output: /wc/output/part-r-00000 (copy in $LAB_RESULTS/wordcount_output.txt)"
 }

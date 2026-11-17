@@ -30,6 +30,7 @@ lab_main() {
 
   step 5 "Output (year  max temperature)"
   hdfs_cmd -cat /weather/output/part-r-00000
-  hdfs_cmd -get -f /weather/output/part-r-00000 "$LAB_RESULTS/weather_output.txt"
+  # copy for the results folder (not a lab command, so not shown)
+  "${HDFS_CLI[@]}" -get -f /weather/output/part-r-00000 "$LAB_RESULTS/weather_output.txt" >> "${LAB_LOG:-/dev/null}" 2>&1
   note_ok "Weather output: /weather/output/part-r-00000 (copy in $LAB_RESULTS/weather_output.txt)"
 }

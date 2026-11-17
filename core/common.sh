@@ -38,6 +38,7 @@ chmod 700 "$STATE_DIR" 2>/dev/null || true
 : "${AUTO_SETUP:=1}"
 : "${STACK_DIR:=$HOME/bigdata_stack}"
 : "${REUSE_INSTALLED:=1}"
+: "${LAB_IN_HOME:=1}"
 # versions of the runner's own copies (tested together)
 : "${HADOOP_VER:=3.3.6}"
 : "${PIG_VER:=0.17.0}"
@@ -269,11 +270,23 @@ save_detected() {   # save_detected KEY VALUE  -> state/detected.env
   export "$1=$2"
 }
 
-lab_workdir() {   # lab_workdir NAME : create and enter the lab's work directory
-  LAB_WORK="$LAB_WORKDIR_BASE/$1"
-  mkdir -p "$LAB_WORK" "$RESULTS_DIR/$1" || die "Cannot create $LAB_WORK"
+# lab_workdir NAME : the folder the lab's commands run in.
+#   LAB_IN_HOME=1 (default): the home folder, like a student who opens a
+#     terminal and starts typing. The prompt stays "user@host:~$" and the lab's
+#     files (the program, its output) are in the home folder.
+#   LAB_IN_HOME=0: a folder per lab under LAB_WORKDIR_BASE.
+# Helper files that are not part of the lab (logs of daemons, staging) always
+# go under LAB_WORKDIR_BASE and never show up in the lab window.
+lab_workdir() {
   LAB_RESULTS="$RESULTS_DIR/$1"
-  show "cd $LAB_WORK"
+  mkdir -p "$LAB_RESULTS" "$LAB_WORKDIR_BASE"
+  if [ "${LAB_IN_HOME:-1}" = 1 ]; then
+    LAB_WORK="$HOME"
+  else
+    LAB_WORK="$LAB_WORKDIR_BASE/$1"
+    mkdir -p "$LAB_WORK" || die "Cannot create $LAB_WORK"
+    show "cd $LAB_WORK"
+  fi
   cd "$LAB_WORK" || die "Cannot enter $LAB_WORK"
 }
 

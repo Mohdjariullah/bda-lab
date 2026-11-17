@@ -25,8 +25,9 @@ needed for that.
 
 **The lab window is a plain terminal.** It shows your normal prompt, the
 commands as if you typed them, and their output. No headers, no "finished"
-message. At the end it is a normal terminal in the lab's folder and it stays
-open, also when you close the menu window.
+message. Everything runs in your home folder, so the prompt is the one of a
+new terminal (`student@lab-pc:~$`). At the end the window is a normal
+terminal and it stays open, also when you close the menu window.
 
 **A wrong configuration on the PC does not matter.** Errors like "version
 mismatch" or "environment is not configured" come from the settings around a
@@ -310,14 +311,18 @@ student@lab-pc:~$ export SPARK_HOME=/opt/spark
 student@lab-pc:~$ export PATH=$SPARK_HOME/bin:$PATH
 student@lab-pc:~$ spark-submit --version
 ...
-student@lab-pc:~$ cd /home/student/bigdata_labs/lab08
-student@lab-pc:~/bigdata_labs/lab08$ cat spark_lab.py
+student@lab-pc:~$ cat spark_lab.py
 ...
-student@lab-pc:~/bigdata_labs/lab08$ spark-submit spark_lab.py
+student@lab-pc:~$ spark-submit spark_lab.py
 Sum of Evens in 1 Million Integers: 249999500000
 ...
-student@lab-pc:~/bigdata_labs/lab08$ 
+student@lab-pc:~$ 
 ```
+
+The lab runs in your **home folder**, like in a terminal you just opened.
+The program files of the lab (for example `spark_lab.py`, `WordCount.java`,
+`wordcount.jar`) are created there. A file with the same name that is already
+in your home folder is replaced by the lab's file.
 
 These are the real commands, in the right order. You can copy them into your
 record or type them yourself in another terminal.
@@ -354,7 +359,7 @@ stops and says so. Restart the PC and run the lab again.
 The lab window does not say "finished". After the last output you see your
 prompt again, and the window is now a normal terminal:
 
-- it is in the lab's folder (`~/bigdata_labs/lab08`),
+- it is in your home folder, where the lab's files are,
 - the lab's settings are active, so you can type more commands, for example
   `hdfs dfs -ls /` after Lab 3 or `spark-submit spark_lab.py` again,
 - it **stays open** until you close it yourself. You can close the launcher
@@ -732,9 +737,22 @@ bda-lab/
   state/                    progress files, detected paths, pids
 ```
 
-Outside this folder the runner writes only to `~/bigdata_stack` (tools),
-`~/bigdata_labs` (work files, Kafka data), `~/hadoopdata` (HDFS data),
-`/tmp/retail_stream_input` (Lab 9) and pip's user folder `~/.local`.
+Outside this folder the runner writes to:
+
+- the home folder: the lab's own program files and outputs (`lab1_setup.py`,
+  `WordCount.java`, `wordcount.jar`, `src/`, `classes/`, `pig_input/`,
+  `pig_output/`, `metastore_db/`, `consumer.log` ...). With `LAB_IN_HOME=0`
+  they go to `~/bigdata_labs/<lab>` instead,
+- `~/bigdata_labs`: helper files that are not part of a lab (daemon logs,
+  Kafka data, job staging). They never appear in the lab window,
+- `~/hadoopdata` (HDFS data), `~/bigdata_stack` (downloaded tools),
+  `/tmp/retail_stream_input` (Lab 9), pip's user folder `~/.local`.
+
+Two shown commands are shortened: ZooKeeper and Kafka are shown as
+`zookeeper-server-start.sh -daemon $KAFKA_HOME/config/zookeeper.properties`
+and `kafka-server-start.sh -daemon $KAFKA_HOME/config/server.properties`.
+They really start with the runner's copy of those two files (own data
+folder, `localhost` listener).
 
 ## Configuration switches (`config/environment.conf`)
 
@@ -750,6 +768,7 @@ SERVICE_TIMEOUT=90        # seconds to wait for a service
 MAX_FIX_ATTEMPTS=2        # fix-and-retry rounds per command
 KAFKA_PORT=9092
 TERM_EMULATOR=""          # force a terminal emulator, e.g. gnome-terminal
+LAB_IN_HOME=1             # 0 = each lab runs in ~/bigdata_labs/<lab> instead of the home folder
 LAB_NEW_WINDOW=1          # 0 = run labs in the launcher window (same as --here)
 LAB_RAW_OUTPUT=1          # 0 = lab window also shows [CHECK]/[STEP]/[FIX] lines
 ```

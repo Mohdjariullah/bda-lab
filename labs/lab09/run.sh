@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # Lab 9 - Spark Structured Streaming on a retail dataset (manual: structured_streaming.py)
 
+# Spark reads log4j2.properties from SPARK_CONF_DIR, so the files go into a
+# private configuration folder and the spark-submit command stays the plain one.
 _write_quiet_log4j() {
-  cat > log4j2.properties <<'L4J'
+  local d="$STATE_DIR/spark-conf-quiet"; mkdir -p "$d"
+  export SPARK_CONF_DIR="$d"
+  cat > "$d/log4j2.properties" <<'L4J'
 rootLogger.level = warn
 rootLogger.appenderRef.stdout.ref = console
 appender.console.type = Console
@@ -19,7 +23,7 @@ logger.w2.level = off
 logger.sched.name = org.apache.spark.scheduler
 logger.sched.level = off
 L4J
-  cat > log4j.properties <<'L4J'
+  cat > "$d/log4j.properties" <<'L4J'
 log4j.rootCategory=WARN, console
 log4j.appender.console=org.apache.log4j.ConsoleAppender
 log4j.appender.console.target=System.err
@@ -80,14 +84,12 @@ lab_main() {
   _write_quiet_log4j
   run_pipe _hide_shutdown_noise timeout --foreground -k 5 300 "$SPARK_SUBMIT" \
       --conf spark.sql.shuffle.partitions=4 --conf spark.ui.enabled=false \
-      --driver-java-options "-Dlog4j2.configurationFile=file:$LAB_WORK/log4j2.properties -Dlog4j.configuration=file:$LAB_WORK/log4j.properties" \
       structured_streaming.py || die "Streaming job failed"
   if ! log_has 'Batch: [0-9]+' 400; then
     warn "No micro-batch table was printed in the 10 second window (slow machine)"
     note_fix "Running the job once more now that Spark's JVM files are cached"
     run_pipe _hide_shutdown_noise timeout --foreground -k 5 300 "$SPARK_SUBMIT" \
       --conf spark.sql.shuffle.partitions=2 --conf spark.ui.enabled=false \
-      --driver-java-options "-Dlog4j2.configurationFile=file:$LAB_WORK/log4j2.properties -Dlog4j.configuration=file:$LAB_WORK/log4j.properties" \
       structured_streaming.py || die "Streaming job failed"
   fi
 

@@ -36,7 +36,7 @@ _run_pig_local() {
   # "pig -x local" does not read mapred-site.xml, so it would stage its job in
   # /tmp/hadoop/mapred/staging, a folder shared by all users of the PC. When it
   # belongs to someone else the job fails with "ENOENT". Use a private folder.
-  export PIG_OPTS="-Dmapreduce.jobtracker.staging.root.dir=$LAB_WORK/staging"
+  export PIG_OPTS="-Dmapreduce.jobtracker.staging.root.dir=$LAB_WORKDIR_BASE/pig-staging"
   rm -rf pig_output
   if run "$PIG_HOME/bin/pig" -x local filter_script.pig; then return 0; fi
   [ -n "${HADOOP_HOME:-}" ] || return 1
@@ -67,7 +67,10 @@ lab_main() {
   check "Pig core jar"; ok "$pigjar"
 
   lab_workdir lab05
-  rm -rf src pig_input classes; cp -r "$LAB_DIR/src" "$LAB_DIR/pig_input" .
+  # only the lab's own files are replaced (the folder may be the home folder)
+  mkdir -p src pig_input classes
+  cp "$LAB_DIR"/src/*.java src/; cp "$LAB_DIR"/pig_input/* pig_input/
+  rm -rf classes/com/lab/pig
 
   step 1 "Raw data (pig_input/raw_logs.csv)"
   run cat pig_input/raw_logs.csv
@@ -112,7 +115,7 @@ lab_main() {
       step 7 "Output (/user/hadoop/pig_output)"
       hdfs_cmd -ls /user/hadoop/pig_output
       run_sh "$HADOOP_HOME/bin/hdfs dfs -cat /user/hadoop/pig_output/part-*"
-      run_sh "$HADOOP_HOME/bin/hdfs dfs -cat /user/hadoop/pig_output/part-* > $LAB_RESULTS/pig_output.txt"
+      "$HADOOP_HOME/bin/hdfs" dfs -cat '/user/hadoop/pig_output/part-*' > "$LAB_RESULTS/pig_output.txt" 2>/dev/null
       note_ok "Pig UDF output stored in HDFS at /user/hadoop/pig_output"
       return 0
     fi

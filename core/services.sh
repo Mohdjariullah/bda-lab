@@ -96,7 +96,9 @@ free_port() {
 # bg_start NAME LOGFILE CMD... : start a daemon with nohup, remember its pid
 bg_start() {
   local name=$1 log=$2; shift 2
-  show "nohup $* > $log 2>&1 &"
+  # BG_LABEL: the command as it is typed by hand (the runner's own log file and
+  # private configuration file are not part of what a student types)
+  show "${BG_LABEL:-nohup $* > $log 2>&1 &}"
   nohup "$@" > "$log" 2>&1 &
   local pid=$!
   echo "$pid" > "$STATE_DIR/$name.pid"
@@ -115,7 +117,9 @@ kafka_topics_args() {
 }
 
 _kafka_start_broker() {
-  bg_start kafka "$LAB_WORK/kafka-server.log" "$KAFKA_HOME/bin/kafka-server-start.sh" "$KAFKA_CFG"
+  mkdir -p "$LAB_WORKDIR_BASE/kafka-data"
+  BG_LABEL="kafka-server-start.sh -daemon \$KAFKA_HOME/config/server.properties" \
+    bg_start kafka "$LAB_WORKDIR_BASE/kafka-data/kafka-server.log" "$KAFKA_HOME/bin/kafka-server-start.sh" "$KAFKA_CFG"
   info "Waiting for the broker on port $KAFKA_PORT (up to ${SERVICE_TIMEOUT}s)..."
   local pid i=0; pid=$(cat "$STATE_DIR/kafka.pid" 2>/dev/null)
   while [ "$i" -lt "$SERVICE_TIMEOUT" ]; do
@@ -197,7 +201,7 @@ ensure_kafka() {
           port_in_use 2181 && warn "Port 2181 is still in use. The broker will try to use that ZooKeeper." ;;
       esac
     fi
-    port_in_use 2181 || _zookeeper_start || die "ZooKeeper did not start. See $LAB_WORK/zookeeper.log"
+    port_in_use 2181 || _zookeeper_start || die "ZooKeeper did not start. See $LAB_WORKDIR_BASE/kafka-data/zookeeper.log"
   else
     local logdir; logdir=$(kafka_prop "$KAFKA_CFG" log.dirs); logdir=${logdir:-/tmp/kraft-combined-logs}
     if [ ! -f "$logdir/meta.properties" ]; then
@@ -213,7 +217,7 @@ ensure_kafka() {
     local try=0
     # the last broker was killed (window closed, power off): ZooKeeper still holds
     # its registration until the old session expires (18 s by default)
-    while grep -q "NodeExistsException" "$LAB_WORK/kafka-server.log" 2>/dev/null && [ "$try" -lt 3 ]; do
+    while grep -q "NodeExistsException" "$LAB_WORKDIR_BASE/kafka-data/kafka-server.log" 2>/dev/null && [ "$try" -lt 3 ]; do
       try=$((try + 1))
       fail "Broker refused to start: ZooKeeper still holds the registration of the previous broker"
       note_fix "Waiting 20 s for ZooKeeper to drop it, then starting the broker again ($try/3)"
@@ -227,16 +231,18 @@ ensure_kafka() {
       note_fix "Removing the old Kafka and ZooKeeper data and starting both again"
       pkill -f "$KAFKA_HOME/.*kafka\.Kafka" 2>/dev/null; pkill -f "$KAFKA_HOME/.*QuorumPeerMain" 2>/dev/null; sleep 3
       wipe_dir "$KAFKA_DATA/kafka-logs" "$KAFKA_DATA/zookeeper"
-      port_in_use 2181 || _zookeeper_start || die "ZooKeeper did not start. See $LAB_WORK/zookeeper.log"
+      port_in_use 2181 || _zookeeper_start || die "ZooKeeper did not start. See $LAB_WORKDIR_BASE/kafka-data/zookeeper.log"
       _kafka_start_broker && { note_ok "Kafka broker started on port $KAFKA_PORT"; return 0; }
     fi
-    warn "Last lines of the broker log:"; tail -n 15 "$LAB_WORK/kafka-server.log"
+    warn "Last lines of the broker log:"; tail -n 15 "$LAB_WORKDIR_BASE/kafka-data/kafka-server.log"
     die "Kafka broker did not start"
   fi
   note_ok "Kafka broker started on port $KAFKA_PORT"
 }
 
 _zookeeper_start() {
-  bg_start zookeeper "$LAB_WORK/zookeeper.log" "$KAFKA_HOME/bin/zookeeper-server-start.sh" "${ZK_CFG:-$KAFKA_HOME/config/zookeeper.properties}"
+  mkdir -p "$LAB_WORKDIR_BASE/kafka-data"
+  BG_LABEL="zookeeper-server-start.sh -daemon \$KAFKA_HOME/config/zookeeper.properties" \
+    bg_start zookeeper "$LAB_WORKDIR_BASE/kafka-data/zookeeper.log" "$KAFKA_HOME/bin/zookeeper-server-start.sh" "${ZK_CFG:-$KAFKA_HOME/config/zookeeper.properties}"
   wait_for_port 2181 60
 }

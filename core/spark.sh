@@ -43,7 +43,5 @@ ensure_spark() {
   fi
   # avoid hostname lookups that hang the driver on lab machines; force the same python for driver and workers
   export SPARK_LOCAL_IP=127.0.0.1 PYSPARK_PYTHON=python3 PYSPARK_DRIVER_PYTHON=python3
-  check "spark-submit"
-  run_t 120 "$SPARK_SUBMIT" --version || { note_fail "spark-submit does not run (see the log)"; return 1; }
   note_ok "Spark ready: $SPARK_SUBMIT"
 }
