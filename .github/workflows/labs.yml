@@ -1,0 +1,55 @@
+# Runs every lab on fresh Ubuntu machines, as a normal (non-root) user.
+# This is the proof that the runner works on a PC it has never seen.
+name: All labs on Ubuntu
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  labs:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      # the Apache archive server is slow: keep the downloaded tools between runs
+      - uses: actions/cache@v4
+        with:
+          path: ~/bigdata_stack
+          key: bigdata-stack-${{ matrix.os }}-v1
+
+      - name: What is on this machine
+        run: |
+          . /etc/os-release && echo "$PRETTY_NAME"; id -un; python3 --version; bash --version | head -n1
+          ls /usr/lib/jvm || true
+
+      - name: Run all labs
+        run: ./lab-runner --here all < /dev/null
+
+      - name: Summary
+        if: always()
+        run: |
+          cat results/last_run_summary.txt || true
+          echo; echo "--- reasons of failed labs:"; grep -h '^\[FAIL\]' logs/lab*_*.log || echo "none"
+          echo; echo "--- tools used:"; cat state/detected.env || true
+
+      - name: Outputs of the labs
+        if: always()
+        run: |
+          for f in results/lab04_wordcount/wordcount_output.txt results/lab04_weather/weather_output.txt results/lab05/pig_output.txt results/lab07/hive_output.txt results/lab08/spark_output.txt results/lab10/consumer.log; do
+            echo "== $f"; cat "$f" 2>/dev/null || echo "(missing)"; echo
+          done
+          echo "== lab 9 batches printed: $(grep -c 'Batch: [0-9]' logs/lab09.log 2>/dev/null)"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: logs-${{ matrix.os }}
+          path: |
+            logs/
+            results/
