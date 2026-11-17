@@ -25,9 +25,10 @@ _fix_udf_classpath() {
 
 _write_script() {   # _write_script local|mapreduce
   cp "$LAB_DIR/filter_script.pig" filter_script.pig
-  sed -i "s#/path/to/CleanDataUDF.jar#$LAB_WORK/CleanDataUDF.jar#" filter_script.pig
+  # file names relative to the folder the lab runs in (no folder path in the script)
+  sed -i "s#/path/to/CleanDataUDF.jar#CleanDataUDF.jar#" filter_script.pig
   if [ "$1" = local ]; then
-    sed -i "s#'/user/hadoop/pig_input/raw_logs.csv'#'$LAB_WORK/pig_input/raw_logs.csv'#; s#'/user/hadoop/pig_output'#'$LAB_WORK/pig_output'#" filter_script.pig
+    sed -i "s#'/user/hadoop/pig_input/raw_logs.csv'#'pig_input/raw_logs.csv'#; s#'/user/hadoop/pig_output'#'pig_output'#" filter_script.pig
   fi
   show "cat filter_script.pig"; cat filter_script.pig
 }
@@ -133,5 +134,5 @@ lab_main() {
   run ls -l pig_output
   run_sh "cat pig_output/part-*"
   cat pig_output/part-* > "$LAB_RESULTS/pig_output.txt" 2>/dev/null
-  note_ok "Pig UDF output stored in $LAB_WORK/pig_output"
+  note_ok "Pig UDF output stored in $PWD/pig_output"
 }

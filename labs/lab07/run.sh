@@ -169,8 +169,9 @@ lab_main() {
   cp "$LAB_DIR"/src/*.java src/
   rm -rf classes/com/lab/hive
   cp "$LAB_DIR/emp_data.csv" "$LAB_DIR/lab7a_hiveql.hql" "$LAB_DIR/lab7b_udf.hql" .
-  sed -i "s#/home/hadoop/emp_data.csv#$LAB_WORK/emp_data.csv#" lab7a_hiveql.hql
-  sed -i "s#/path/to/MaskSalaryUDF.jar#$LAB_WORK/MaskSalaryUDF.jar#" lab7b_udf.hql
+  # file names relative to the folder the lab runs in (no folder path in the scripts)
+  sed -i "s#/home/hadoop/emp_data.csv#emp_data.csv#" lab7a_hiveql.hql
+  sed -i "s#/path/to/MaskSalaryUDF.jar#MaskSalaryUDF.jar#" lab7b_udf.hql
   # 7b runs in a new Hive session, so it must select the database first
   grep -qi '^USE lab_hive' lab7b_udf.hql || sed -i '1i USE lab_hive;' lab7b_udf.hql
   local hiveexec; hiveexec=$(ls "$HIVE_HOME"/lib/hive-exec-*.jar 2>/dev/null | head -n1)
@@ -209,7 +210,7 @@ lab_main() {
     _hive_quiet "USE lab_hive; $q1"
     echo
     echo "-- $q2"
-    _hive_quiet "USE lab_hive; ADD JAR $LAB_WORK/MaskSalaryUDF.jar; CREATE TEMPORARY FUNCTION mask_sal AS 'com.lab.hive.MaskSalaryUDF'; $q2"
+    _hive_quiet "USE lab_hive; ADD JAR MaskSalaryUDF.jar; CREATE TEMPORARY FUNCTION mask_sal AS 'com.lab.hive.MaskSalaryUDF'; $q2"
   } > "$LAB_RESULTS/hive_output.txt" 2>/dev/null
   # the copy for the results folder is not a lab command: shown only in verbose mode
   if [ "${RAW_OUTPUT:-0}" = 1 ]; then cat "$LAB_RESULTS/hive_output.txt" >> "${LAB_LOG:-/dev/null}"; else run cat "$LAB_RESULTS/hive_output.txt"; fi

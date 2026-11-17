@@ -51,12 +51,12 @@ export LAB_ID LAB_DIR LAB_LOG PROGRESS_FILE STATUS_FILE
 open_shell() {
   local rc="$STATE_DIR/lab$LAB_ID.bashrc" v
   {
-    echo '[ -f ~/.bashrc ] && . ~/.bashrc'
+    printf '[ -f %q ] && . %q\n' "$REAL_HOME/.bashrc" "$REAL_HOME/.bashrc"
     for v in JAVA_HOME HADOOP_HOME HADOOP_CONF_DIR HADOOP_LOG_DIR HADOOP_PID_DIR HADOOP_MAPRED_HOME \
              HADOOP_COMMON_HOME HADOOP_HDFS_HOME YARN_HOME HADOOP_CLASSPATH HDFS_NAMENODE_USER \
              HDFS_DATANODE_USER HDFS_SECONDARYNAMENODE_USER PIG_HOME HIVE_HOME HIVE_CONF_DIR \
              SPARK_HOME SPARK_CONF_DIR SPARK_LOCAL_IP PYSPARK_PYTHON PYSPARK_DRIVER_PYTHON \
-             KAFKA_HOME LOG_DIR PATH; do
+             KAFKA_HOME LOG_DIR PATH HOME PYTHONUSERBASE; do
       [ -n "${!v:-}" ] && printf 'export %s=%q\n' "$v" "${!v}"
     done
     printf 'cd %q\n' "${LAB_WORK:-$HOME}"

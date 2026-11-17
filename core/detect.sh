@@ -248,7 +248,7 @@ ensure_python() {
     note_fail "python3 is not installed on this PC (Ubuntu always has it). Install it: sudo apt install python3"
     return 1
   fi
-  path_prepend "$HOME/.local/bin"
+  path_prepend "$REAL_HOME/.local/bin"
   if ! python3 -m pip --version >/dev/null 2>&1; then
     # Ubuntu ships python3 without pip. get-pip.py installs it for this user only: no password needed.
     [ "$AUTO_INSTALL_PY" = 1 ] || { warn "pip is not available and AUTO_INSTALL_PY=0"; return 0; }

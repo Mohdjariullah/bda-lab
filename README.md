@@ -25,9 +25,11 @@ needed for that.
 
 **The lab window is a plain terminal.** It shows your normal prompt, the
 commands as if you typed them, and their output. No headers, no "finished"
-message. Everything runs in your home folder, so the prompt is the one of a
-new terminal (`student@lab-pc:~$`). At the end the window is a normal
-terminal and it stays open, also when you close the menu window.
+message. The prompt is the one of a new terminal (`student@lab-pc:~$`). The
+lab's files are kept together in `~/bigdata_labs/<lab>`, not spread over
+your home folder; inside the lab window that folder is shown as `~`. At the
+end the window is a normal terminal and it stays open, also when you close
+the menu window.
 
 **A wrong configuration on the PC does not matter.** Errors like "version
 mismatch" or "environment is not configured" come from the settings around a
@@ -319,10 +321,20 @@ Sum of Evens in 1 Million Integers: 249999500000
 student@lab-pc:~$ 
 ```
 
-The lab runs in your **home folder**, like in a terminal you just opened.
-The program files of the lab (for example `spark_lab.py`, `WordCount.java`,
-`wordcount.jar`) are created there. A file with the same name that is already
-in your home folder is replaced by the lab's file.
+**Where the files are.** The program files of a lab (for example
+`spark_lab.py`, `WordCount.java`, `wordcount.jar`) are in one folder per lab:
+`~/bigdata_labs/lab08`, `~/bigdata_labs/lab04_wordcount` and so on. Your home
+folder stays clean.
+
+**What the window shows.** Inside the lab window that folder is the home
+folder (`~`), so the prompt is `student@lab-pc:~$` and there is no `cd` line.
+If you type `ls` in the lab window you see the lab's files. If you type `pwd`
+you see the real folder name.
+
+The programs themselves sometimes print the full path of a file in their own
+messages (Spark and Pig do, for example
+`Successfully stored 2 records in: "file:///home/student/bigdata_labs/lab05/pig_output"`).
+The tool does not change what a program prints.
 
 These are the real commands, in the right order. You can copy them into your
 record or type them yourself in another terminal.
@@ -359,7 +371,7 @@ stops and says so. Restart the PC and run the lab again.
 The lab window does not say "finished". After the last output you see your
 prompt again, and the window is now a normal terminal:
 
-- it is in your home folder, where the lab's files are,
+- it is in the lab's folder (shown as `~`), where the lab's files are,
 - the lab's settings are active, so you can type more commands, for example
   `hdfs dfs -ls /` after Lab 3 or `spark-submit spark_lab.py` again,
 - it **stays open** until you close it yourself. You can close the launcher
@@ -739,12 +751,13 @@ bda-lab/
 
 Outside this folder the runner writes to:
 
-- the home folder: the lab's own program files and outputs (`lab1_setup.py`,
-  `WordCount.java`, `wordcount.jar`, `src/`, `classes/`, `pig_input/`,
-  `pig_output/`, `metastore_db/`, `consumer.log` ...). With `LAB_IN_HOME=0`
-  they go to `~/bigdata_labs/<lab>` instead,
-- `~/bigdata_labs`: helper files that are not part of a lab (daemon logs,
-  Kafka data, job staging). They never appear in the lab window,
+- `~/bigdata_labs/<lab>`: the lab's own program files and outputs. In the
+  lab window `HOME` points to this folder, which is why the prompt shows `~`
+  (`REAL_HOME` keeps the real one; `PYTHONUSERBASE` keeps Python's user
+  packages working). `LAB_SHOW_AS_HOME=0` shows the real folder name;
+  `LAB_IN_HOME=1` really runs the labs in the home folder,
+- `~/bigdata_labs` itself: helper files that are not part of a lab (daemon
+  logs, Kafka data, job staging),
 - `~/hadoopdata` (HDFS data), `~/bigdata_stack` (downloaded tools),
   `/tmp/retail_stream_input` (Lab 9), pip's user folder `~/.local`.
 
@@ -768,7 +781,8 @@ SERVICE_TIMEOUT=90        # seconds to wait for a service
 MAX_FIX_ATTEMPTS=2        # fix-and-retry rounds per command
 KAFKA_PORT=9092
 TERM_EMULATOR=""          # force a terminal emulator, e.g. gnome-terminal
-LAB_IN_HOME=1             # 0 = each lab runs in ~/bigdata_labs/<lab> instead of the home folder
+LAB_SHOW_AS_HOME=1        # lab files in ~/bigdata_labs/<lab>, shown as "~" in the lab window; 0 = show the real folder
+LAB_IN_HOME=0             # 1 = really run the labs in the home folder
 LAB_NEW_WINDOW=1          # 0 = run labs in the launcher window (same as --here)
 LAB_RAW_OUTPUT=1          # 0 = lab window also shows [CHECK]/[STEP]/[FIX] lines
 ```

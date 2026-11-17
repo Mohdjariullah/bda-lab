@@ -38,7 +38,10 @@ chmod 700 "$STATE_DIR" 2>/dev/null || true
 : "${AUTO_SETUP:=1}"
 : "${STACK_DIR:=$HOME/bigdata_stack}"
 : "${REUSE_INSTALLED:=1}"
-: "${LAB_IN_HOME:=1}"
+: "${LAB_IN_HOME:=0}"
+: "${LAB_SHOW_AS_HOME:=1}"
+# the user's real home folder (HOME may point to the lab folder inside a lab window)
+export REAL_HOME="${REAL_HOME:-$HOME}"
 # versions of the runner's own copies (tested together)
 : "${HADOOP_VER:=3.3.6}"
 : "${PIG_VER:=0.17.0}"
@@ -271,21 +274,27 @@ save_detected() {   # save_detected KEY VALUE  -> state/detected.env
 }
 
 # lab_workdir NAME : the folder the lab's commands run in.
-#   LAB_IN_HOME=1 (default): the home folder, like a student who opens a
-#     terminal and starts typing. The prompt stays "user@host:~$" and the lab's
-#     files (the program, its output) are in the home folder.
-#   LAB_IN_HOME=0: a folder per lab under LAB_WORKDIR_BASE.
-# Helper files that are not part of the lab (logs of daemons, staging) always
-# go under LAB_WORKDIR_BASE and never show up in the lab window.
+#   Default: ~/bigdata_labs/<lab>. All files of the lab stay in that folder.
+#   LAB_SHOW_AS_HOME=1 (default): inside the lab window that folder is the
+#     home folder (HOME points to it), so the prompt is "user@host:~$", the
+#     same as in a terminal that was just opened, and no "cd" line and no
+#     folder name appear. REAL_HOME keeps the real one for everything else.
+#   LAB_IN_HOME=1: really run in the home folder (files are created in ~).
 lab_workdir() {
   LAB_RESULTS="$RESULTS_DIR/$1"
   mkdir -p "$LAB_RESULTS" "$LAB_WORKDIR_BASE"
-  if [ "${LAB_IN_HOME:-1}" = 1 ]; then
+  if [ "${LAB_IN_HOME:-0}" = 1 ]; then
     LAB_WORK="$HOME"
   else
     LAB_WORK="$LAB_WORKDIR_BASE/$1"
     mkdir -p "$LAB_WORK" || die "Cannot create $LAB_WORK"
-    show "cd $LAB_WORK"
+    if [ "${LAB_SHOW_AS_HOME:-1}" = 1 ]; then
+      # Python finds the user's packages through HOME: keep it on the real one
+      export PYTHONUSERBASE="$REAL_HOME/.local"
+      export HOME="$LAB_WORK"
+    else
+      show "cd $LAB_WORK"
+    fi
   fi
   cd "$LAB_WORK" || die "Cannot enter $LAB_WORK"
 }
@@ -296,7 +305,7 @@ wipe_dir() {
   local d
   for d in "$@"; do
     case "$d" in
-      /*/*/*) [ "$d" != "$HOME" ] && [ -e "$d" ] && rm -rf -- "$d" ;;
+      /*/*/*) [ "$d" != "$HOME" ] && [ "$d" != "$REAL_HOME" ] && [ -e "$d" ] && rm -rf -- "$d" ;;
       *) warn "Refusing to delete '$d' (not a lab data directory)" ;;
     esac
   done

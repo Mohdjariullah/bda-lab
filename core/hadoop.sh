@@ -145,17 +145,17 @@ ensure_ssh_localhost() {
     return 0
   fi
   warn "Passwordless SSH to localhost is not configured"
-  mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
-  if [ ! -f "$HOME/.ssh/id_rsa" ]; then
+  mkdir -p "$REAL_HOME/.ssh"; chmod 700 "$REAL_HOME/.ssh"
+  if [ ! -f "$REAL_HOME/.ssh/id_rsa" ]; then
     fixmsg "Generating an SSH key"
-    run ssh-keygen -q -t rsa -P "" -f "$HOME/.ssh/id_rsa"
+    run ssh-keygen -q -t rsa -P "" -f "$REAL_HOME/.ssh/id_rsa"
   fi
-  touch "$HOME/.ssh/authorized_keys"
-  if ! grep -qsF "$(cut -d' ' -f2 "$HOME/.ssh/id_rsa.pub")" "$HOME/.ssh/authorized_keys"; then
+  touch "$REAL_HOME/.ssh/authorized_keys"
+  if ! grep -qsF "$(cut -d' ' -f2 "$REAL_HOME/.ssh/id_rsa.pub")" "$REAL_HOME/.ssh/authorized_keys"; then
     fixmsg "Adding the key to authorized_keys"
-    cat "$HOME/.ssh/id_rsa.pub" >> "$HOME/.ssh/authorized_keys"
+    cat "$REAL_HOME/.ssh/id_rsa.pub" >> "$REAL_HOME/.ssh/authorized_keys"
   fi
-  chmod 600 "$HOME/.ssh/authorized_keys"
+  chmod 600 "$REAL_HOME/.ssh/authorized_keys"
   if _ssh_ok; then
     note_fix "Passwordless SSH to localhost configured"
     return 0
@@ -327,8 +327,8 @@ ensure_hdfs_running() {
     warn "NameNode has never been formatted ($NN_DIR)"
     if ! mkdir -p "$NN_DIR" 2>/dev/null || [ ! -w "$NN_DIR" ]; then
       fail "The NameNode directory is not writable by $(id -un): $NN_DIR"
-      note_fix "Using a new HDFS data directory for this user: $HOME/hadoopdata_$(id -un)"
-      move_hdfs_data "$HOME/hadoopdata_$(id -un)"
+      note_fix "Using a new HDFS data directory for this user: $REAL_HOME/hadoopdata_$(id -un)"
+      move_hdfs_data "$REAL_HOME/hadoopdata_$(id -un)"
       namenode_needs_format || true
     fi
     fixmsg "Formatting the NameNode (first time only, nothing to lose yet)"
@@ -337,8 +337,8 @@ ensure_hdfs_running() {
     ok "NameNode already formatted ($NN_DIR)"
     if [ ! -w "$NN_DIR/current" ]; then
       fail "The HDFS name directory $NN_DIR belongs to another user ($(stat -c %U "$NN_DIR/current" 2>/dev/null))"
-      note_fix "Using a new HDFS data directory for this user: $HOME/hadoopdata_$(id -un)"
-      move_hdfs_data "$HOME/hadoopdata_$(id -un)"
+      note_fix "Using a new HDFS data directory for this user: $REAL_HOME/hadoopdata_$(id -un)"
+      move_hdfs_data "$REAL_HOME/hadoopdata_$(id -un)"
       namenode_needs_format && { run "$HADOOP_HOME/bin/hdfs" namenode -format -force -nonInteractive || die "NameNode format failed"; }
     fi
   fi
