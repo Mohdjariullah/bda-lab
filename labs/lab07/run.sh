@@ -13,7 +13,7 @@ _hive_guava_fix() {
   if [ -w "$HIVE_HOME/lib" ]; then
     run mv "$old" "$old.bak" && run cp "$new" "$HIVE_HOME/lib/"
   else
-    ensure_sudo && run sudo mv "$old" "$old.bak" && run sudo cp "$new" "$HIVE_HOME/lib/"
+    warn "No write permission in $HIVE_HOME/lib, the Guava jar was not replaced"; return 1
   fi
 }
 
@@ -46,6 +46,15 @@ _hive_metastore_init() {
     else
       info "Removing the Derby lock file left by the last session (no Hive process is running)"
       rm -f metastore_db/db.lck metastore_db/dbex.lck
+    fi
+  fi
+  # a metastore_db written by another Hive version, or left half-created, makes
+  # every Hive command fail. Check it once and start from an empty one if needed.
+  if [ -d metastore_db ] && [ -x "$HIVE_HOME/bin/schematool" ]; then
+    if ! timeout 120 "$HIVE_HOME/bin/schematool" -dbType derby -info >> "${LAB_LOG:-/dev/null}" 2>&1; then
+      fail "The Hive metastore in $PWD/metastore_db cannot be used (other Hive version or damaged)"
+      note_fix "Removing it and creating a new metastore"
+      wipe_dir "$PWD/metastore_db"; rm -f derby.log
     fi
   fi
   if [ ! -d metastore_db ]; then
@@ -113,6 +122,15 @@ _hive_script() {
       note_fix "Stopping other Hive CLI processes and removing the lock"
       pkill -f "org.apache.hadoop.hive.cli.CliDriver" 2>/dev/null; sleep 2
       rm -f metastore_db/db.lck metastore_db/dbex.lck
+    elif [ -z "${HIVE_META_RESET:-}" ] && _hive_error 'MetaException|Version information not found|schema version|Unable to instantiate .*MetaStoreClient|Failed to start database'; then
+      # metastore_db written by another Hive version, or left half-created
+      HIVE_META_RESET=1
+      fail "The Hive metastore in $PWD/metastore_db cannot be used (other Hive version or damaged)"
+      note_fix "Removing it and creating a new metastore"
+      pkill -f "org.apache.hadoop.hive.cli.CliDriver" 2>/dev/null; sleep 1
+      wipe_dir "$PWD/metastore_db"; rm -f derby.log
+      _hive_metastore_init
+      _hive -e "CREATE DATABASE IF NOT EXISTS lab_hive;" || true
     else
       warn "Last error lines from $(_hive_log):"
       grep -E 'ERROR|Exception' "$(_hive_log)" 2>/dev/null | tail -n 8
@@ -124,7 +142,7 @@ _hive_script() {
 lab_main() {
   ensure_hdfs_running || die "HDFS is not available"
   ensure_mapreduce
-  ensure_tool hive || die "Hive is not installed. Searched: $SEARCH_ROOTS"
+  ensure_tool hive || die "Hive is not available"
   export HIVE_HOME
   local hv; hv=$(version_from_path "$HIVE_HOME")
   [ -n "$hv" ] || hv=$(ls "$HIVE_HOME"/lib/hive-exec-*.jar 2>/dev/null | head -n1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | tail -n1)

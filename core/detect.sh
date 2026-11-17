@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
 # core/detect.sh - find installations, pick ONE copy, set the environment.
 #
-# Selection order for every tool (first valid one wins):
+# Default (REUSE_INSTALLED=0): only two places count.
 #   1. CFG_<TOOL>_HOME from config/environment.conf
+#   2. the runner's own copy in $STACK_DIR (installed by Setup, versions that
+#      are tested together)
+# Other copies on the PC (in /opt, /usr/local, ~/hadoop ...) are ignored, so a
+# wrong version or a broken configuration there cannot break a lab.
+#
+# With REUSE_INSTALLED=1 the search continues (first valid one wins):
 #   2. DETECTED_<TOOL>_HOME cached in state/detected.env (a choice made earlier)
 #   3. <TOOL>_HOME inherited from the shell, if it points to a real install
 #   4. the executable found on PATH
@@ -19,6 +25,18 @@ _tool_spec() {   # sets T_VAR T_BIN T_PROBE for a tool name
     spark)  T_VAR=SPARK_HOME;  T_BIN=bin/spark-submit;         T_PROBE="--version"; T_MARK="jars/spark-core_*.jar" ;;
     kafka)  T_VAR=KAFKA_HOME;  T_BIN=bin/kafka-server-start.sh; T_PROBE="";         T_MARK="libs/kafka_*.jar" ;;
     *) return 1 ;;
+  esac
+}
+
+# stack_home NAME : where Setup puts the runner's own copy of a tool
+stack_home() {
+  case "$1" in
+    hadoop) echo "$STACK_DIR/hadoop-$HADOOP_VER" ;;
+    pig)    echo "$STACK_DIR/pig-$PIG_VER" ;;
+    hive)   echo "$STACK_DIR/apache-hive-$HIVE_VER-bin" ;;
+    spark)  echo "$STACK_DIR/spark-$SPARK_VER-bin-hadoop3" ;;
+    kafka)  echo "$STACK_DIR/kafka_$KAFKA_SCALA_VER-$KAFKA_INSTALL_VER" ;;
+    java)   echo "$STACK_DIR/jdk8" ;;
   esac
 }
 
@@ -62,6 +80,9 @@ locate_home() {
   _tool_spec "$name" || return 1
   local cfgvar="CFG_$T_VAR" cachevar="DETECTED_$T_VAR" cur="${!T_VAR:-}"
   if _valid_home "${!cfgvar:-}" "$T_BIN";   then LOCATE_SOURCE=config; LOCATED_HOME=${!cfgvar};   return 0; fi
+  local own; own=$(stack_home "$name")
+  if _valid_home "$own" "$T_BIN";           then LOCATE_SOURCE="own copy"; LOCATED_HOME=$own;     return 0; fi
+  [ "${REUSE_INSTALLED:-0}" = 1 ] || return 1
   if _valid_home "${!cachevar:-}" "$T_BIN"; then LOCATE_SOURCE=cache;  LOCATED_HOME=${!cachevar}; return 0; fi
   if _valid_home "$cur" "$T_BIN";           then LOCATE_SOURCE=env;    LOCATED_HOME=$cur;         return 0; fi
   local p h
@@ -75,35 +96,18 @@ locate_home() {
   LOCATED_HOME=$(printf '%s\n' "$LOCATE_CANDIDATES" | head -n1)
 }
 
-# ensure_tool NAME : run the plain command first (like the lab would), then
-# resolve the installation, export <TOOL>_HOME + PATH, and re-run if it failed.
+# ensure_tool NAME : resolve the installation, export <TOOL>_HOME + PATH, then
+# run the tool's version command once to prove it starts.
 ensure_tool() {
   local name=$1
   _tool_spec "$name" || return 1
   local binname; binname=$(basename "$T_BIN")
-  local cur="${!T_VAR:-}" probe_rc=0 home
+  local home
   check "$name"
-  if [ -n "$T_PROBE" ]; then
-    run "$binname" $T_PROBE; probe_rc=$?
-  else
-    run bash -c "type $binname"; probe_rc=$?
-  fi
   locate_home "$name"; home=$LOCATED_HOME
   if [ -z "$home" ]; then
-    note_fail "$name installation not detected. Searched: $SEARCH_ROOTS"
+    note_fail "$name is not installed. Type S in the menu (Setup) to install it."
     return 1
-  fi
-  # report what was wrong
-  if [ -n "$cur" ] && [ "$(readlink -f "$cur")" != "$(readlink -f "$home")" ]; then
-    if _valid_home "$cur" "$T_BIN"; then
-      warn "$T_VAR ($cur) is not the selected installation."
-    else
-      fail "$T_VAR points to a missing or broken directory: $cur"
-    fi
-  fi
-  local p; p=$(command -v "$binname" 2>/dev/null)
-  if [ -n "$p" ] && [ "$(readlink -f "$p")" != "$(readlink -f "$home/$T_BIN")" ]; then
-    warn "$binname on PATH ($p) is a different copy than $home/$T_BIN"
   fi
   if [ -n "$LOCATE_CANDIDATES" ] && [ "$(printf '%s\n' "$LOCATE_CANDIDATES" | wc -l)" -gt 1 ]; then
     warn "Multiple $name installations found:"
@@ -114,15 +118,10 @@ ensure_tool() {
   path_prepend "$home/bin"
   [ -d "$home/sbin" ] && path_prepend "$home/sbin"
   save_detected "DETECTED_$T_VAR" "$home"
-  if [ "$probe_rc" -ne 0 ] || [ "$(readlink -f "${cur:-/nonexistent}")" != "$(readlink -f "$home")" ]; then
-    fixmsg "export $T_VAR=$home"
-    fixmsg "export PATH=$home/bin:\$PATH  (source: $LOCATE_SOURCE)"
-    if [ "$probe_rc" -ne 0 ] && [ -n "$T_PROBE" ]; then
-      info "Re-running:"
-      run "$home/$T_BIN" $T_PROBE || { note_fail "$name still fails after the fix"; return 1; }
-    fi
+  if [ -n "$T_PROBE" ]; then
+    run "$binname" $T_PROBE || { note_fail "$name does not start ($home). Type S in the menu (Setup): it replaces a damaged copy."; return 1; }
   fi
-  note_ok "$name: $home"
+  note_ok "$name: $home  ($LOCATE_SOURCE)"
 }
 
 # ---- Java ------------------------------------------------------------------
@@ -134,19 +133,24 @@ _java_major() {
     *)   echo "$v" | cut -d. -f1 ;;
   esac
 }
-# list_javas : "MAJOR<TAB>HOME" for every JDK (java + javac) found
+# list_javas : "MAJOR<TAB>HOME" for every JDK (java + javac) that really runs.
+# The runner's own JDK comes first, so it wins when two have the same version.
 list_javas() {
   {
-    ls -d /usr/lib/jvm/*/ 2>/dev/null | sed 's:/$::'
-    find_bins '*/bin/javac' | while IFS= read -r f; do _home_of_bin "$f"; done
-    [ -n "${JAVA_HOME:-}" ] && echo "$JAVA_HOME"
+    echo "$(stack_home java)"
     [ -n "${CFG_JAVA_HOME:-}" ] && echo "$CFG_JAVA_HOME"
-    local p; p=$(command -v javac 2>/dev/null) && _home_of_bin "$p"
+    ls -d /usr/lib/jvm/*/ 2>/dev/null | sed 's:/$::'
+    if [ "${REUSE_INSTALLED:-0}" = 1 ]; then
+      find_bins '*/bin/javac' | while IFS= read -r f; do _home_of_bin "$f"; done
+      local p; p=$(command -v javac 2>/dev/null) && _home_of_bin "$p"
+    fi
   } | while IFS= read -r h; do
         h=$(readlink -f "$h" 2>/dev/null)
         [ -n "$h" ] && [ -x "$h/bin/javac" ] && [ -x "$h/bin/java" ] && echo "$h"
-      done | sort -u | while IFS= read -r h; do
-        printf '%s\t%s\n' "$(_java_major "$h")" "$h"
+      done | awk '!seen[$0]++' | while IFS= read -r h; do
+        local m; m=$(_java_major "$h")
+        # a JDK directory whose java does not start (half removed package) is skipped
+        [ -n "$m" ] && printf '%s\t%s\n' "$m" "$h"
       done
 }
 
@@ -154,59 +158,29 @@ list_javas() {
 ensure_java() {
   local prefs="${1:-8 11 17 21}"
   check "Java (preferred versions: $prefs)"
-  run java -version;  local rc1=$?
-  run javac -version; local rc2=$?
-  local cur="${JAVA_HOME:-}" chosen="" src="" list m h
+  local chosen="" src="" list m h
   if [ -n "${CFG_JAVA_HOME:-}" ] && [ -x "$CFG_JAVA_HOME/bin/javac" ]; then
     chosen=$(readlink -f "$CFG_JAVA_HOME"); src=config
   else
     list=$(list_javas)
-    if [ -z "$list" ] && [ "${JAVA_NEED_JDK:-1}" = 0 ]; then
-      # Spark and Kafka only need a runtime: accept a plain JRE
-      local jb; jb=$(command -v java 2>/dev/null) || jb=$(find_bins '*/bin/java' | head -n1)
-      if [ -n "$jb" ]; then
-        list=$(printf '%s\t%s\n' "$(_java_major "$(_home_of_bin "$jb")")" "$(_home_of_bin "$jb")")
-        warn "No JDK (javac) found, using the Java runtime at $(_home_of_bin "$jb")"
-      fi
-    fi
     if [ -z "$list" ]; then
-      note_fail "No JDK found (java + javac). Install one, e.g.: sudo apt install openjdk-8-jdk"
+      note_fail "No JDK found. Type S in the menu (Setup) to install Java 8."
       return 1
     fi
     for m in $prefs; do
       h=$(printf '%s\n' "$list" | awk -F'\t' -v m="$m" '$1==m {print $2; exit}')
-      [ -n "$h" ] && { chosen=$h; src="preferred Java $m"; break; }
+      [ -n "$h" ] && { chosen=$h; src="Java $m"; break; }
     done
     if [ -z "$chosen" ]; then
       chosen=$(printf '%s\n' "$list" | sort -n | head -n1 | cut -f2); src="only JDK available"
     fi
-    # keep the current JAVA_HOME when it is valid and has the same major version
-    if [ -n "$cur" ] && [ -x "$cur/bin/java" ] && [ "$(_java_major "$cur")" = "$(_java_major "$chosen")" ]; then
-      chosen=$(readlink -f "$cur"); src=env
-    fi
-    if [ "$(printf '%s\n' "$list" | wc -l)" -gt 1 ]; then
-      warn "Multiple JDKs found:"
-      printf '%s\n' "$list" | awk -F'\t' '{printf "      Java %-3s %s\n", $1, $2}'
-    fi
   fi
-  [ -n "$cur" ] && [ ! -x "$cur/bin/java" ] && fail "JAVA_HOME is invalid: $cur"
   export JAVA_HOME=$chosen
   path_prepend "$JAVA_HOME/bin"
   save_detected DETECTED_JAVA_HOME "$chosen"
   JAVA_MAJOR=$(_java_major "$JAVA_HOME")
-  if [ "$rc1" -ne 0 ] || [ "$rc2" -ne 0 ] || [ "$(readlink -f "${cur:-/nonexistent}")" != "$chosen" ]; then
-    fixmsg "export JAVA_HOME=$JAVA_HOME  ($src)"
-    fixmsg "export PATH=\$JAVA_HOME/bin:\$PATH"
-    if [ "$rc1" -ne 0 ] || [ "$rc2" -ne 0 ]; then
-      info "Re-running:"
-      run java -version
-      if [ "${JAVA_NEED_JDK:-1}" = 0 ] && [ ! -x "$JAVA_HOME/bin/javac" ]; then
-        info "javac is not needed for this lab"
-      else
-        run javac -version || { note_fail "javac still not working"; return 1; }
-      fi
-    fi
-  fi
+  run java -version  || { note_fail "java does not start ($JAVA_HOME)"; return 1; }
+  run javac -version || { note_fail "javac does not start ($JAVA_HOME)"; return 1; }
   note_ok "Java $JAVA_MAJOR: $JAVA_HOME"
 }
 
@@ -214,18 +188,36 @@ ensure_java() {
 ensure_python() {
   check "Python"
   if ! run python3 --version; then
-    fixmsg "python3 is missing, installing"
-    ensure_sudo && run sudo apt-get install -y python3 python3-pip || return 1
-  fi
-  if ! run python3 -m pip --version; then
-    warn "pip is not available"
-    if [ "$AUTO_INSTALL_PY" = 1 ]; then
-      fixmsg "Installing python3-pip"
-      ensure_sudo && run sudo apt-get install -y python3-pip
-    fi
+    note_fail "python3 is not installed on this PC (Ubuntu always has it). Install it: sudo apt install python3"
+    return 1
   fi
   path_prepend "$HOME/.local/bin"
+  if ! python3 -m pip --version >/dev/null 2>&1; then
+    # Ubuntu ships python3 without pip. get-pip.py installs it for this user only: no password needed.
+    [ "$AUTO_INSTALL_PY" = 1 ] || { warn "pip is not available and AUTO_INSTALL_PY=0"; return 0; }
+    fixmsg "pip is missing: installing it for this user (no administrator rights needed)"
+    local gp="$STATE_DIR/get-pip.py"
+    if fetch_url https://bootstrap.pypa.io/get-pip.py "$gp"; then
+      run python3 "$gp" --user --quiet || run python3 "$gp" --user --quiet --break-system-packages \
+        || warn "get-pip.py failed"
+    else
+      warn "Could not download get-pip.py (no internet?)"
+    fi
+    rm -f "$gp"
+  fi
+  run python3 -m pip --version || warn "pip is not available: missing Python packages cannot be installed"
   note_ok "Python $(python3 --version 2>&1 | awk '{print $2}')"
+}
+
+# fetch_url URL DEST : download with whatever this PC has (curl, wget or python3). No resume.
+fetch_url() {
+  if have curl; then curl -fsSL --retry 3 --connect-timeout 20 -o "$2" "$1"
+  elif have wget; then wget -q --tries=3 --timeout=30 -O "$2" "$1"
+  else python3 - "$1" "$2" <<'PY'
+import sys, urllib.request
+urllib.request.urlretrieve(sys.argv[1], sys.argv[2])
+PY
+  fi
 }
 
 # ensure_pymods module[:pip_pkg[:apt_pkg]] ...
@@ -242,8 +234,7 @@ ensure_pymods() {
     if [ "$AUTO_INSTALL_PY" != 1 ]; then missing=1; continue; fi
     fixmsg "Installing $pip"
     run python3 -m pip install --user "$pip" \
-      || run python3 -m pip install --user --break-system-packages "$pip" \
-      || { [ -n "$apt" ] && ensure_sudo && run sudo apt-get install -y "$apt"; }
+      || run python3 -m pip install --user --break-system-packages "$pip"
     if run python3 -c "import $mod"; then
       note_fix "Installed $mod"
     else
@@ -256,16 +247,12 @@ ensure_pymods() {
 # ---- environment scan (used by the launcher menu) --------------------------
 scan_environment() {
   local t h
-  ENV_JAVA=0 ENV_PYTHON=0 ENV_HADOOP=0 ENV_HDFSCONF=0 ENV_PIG=0 ENV_MONGO=0 ENV_HIVE=0 ENV_SPARK=0 ENV_KAFKA=0
-  if [ -x "${DETECTED_JAVA_HOME:-}/bin/javac" ]; then
+  ENV_JAVA=0 ENV_PYTHON=0 ENV_HADOOP=0 ENV_HDFSCONF=0 ENV_PIG=0 ENV_HIVE=0 ENV_SPARK=0 ENV_KAFKA=0
+  # Java 8 is what Hadoop 3.3, Hive 3.1 and Pig 0.17 are built for
+  if [ -n "${CFG_JAVA_HOME:-}" ] && [ -x "$CFG_JAVA_HOME/bin/javac" ]; then
     ENV_JAVA=1
   else
-    local jl m; jl=$(list_javas); h=""
-    for m in 8 11 17 21; do
-      h=$(printf '%s\n' "$jl" | awk -F'\t' -v m="$m" '$1==m {print $2; exit}')
-      [ -n "$h" ] && break
-    done
-    [ -n "$h" ] || h=$(printf '%s\n' "$jl" | head -n1 | cut -f2)
+    h=$(list_javas | awk -F'\t' '$1==8 {print $2; exit}')
     [ -n "$h" ] && { ENV_JAVA=1; save_detected DETECTED_JAVA_HOME "$h"; }
   fi
   have python3 && ENV_PYTHON=1
@@ -278,8 +265,7 @@ scan_environment() {
       export "$T_VAR=$h"
     fi
   done
-  if [ -n "${HADOOP_HOME:-}" ] && grep -qs 'fs.defaultFS' "${HADOOP_CONF_DIR:-$HADOOP_HOME/etc/hadoop}/core-site.xml"; then
+  if [ -n "${HADOOP_HOME:-}" ] && grep -qs 'fs.defaultFS' "$HADOOP_HOME/etc/hadoop/core-site.xml"; then
     ENV_HDFSCONF=1
   fi
-  if have mongod || have mongosh || have mongo; then ENV_MONGO=1; fi
 }

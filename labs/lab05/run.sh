@@ -54,7 +54,7 @@ lab_main() {
   else
     warn "Hadoop not found. Pig will use its bundled Hadoop libraries (local mode only)."
   fi
-  ensure_tool pig || die "Pig is not installed. Searched: $SEARCH_ROOTS"
+  ensure_tool pig || die "Pig is not available"
   export PIG_HOME
   local pigjar; pigjar=$(_pig_core_jar)
   [ -n "$pigjar" ] || pigjar=$(ls "$PIG_HOME"/pig-*.jar 2>/dev/null | grep -v withouthadoop | head -n1)

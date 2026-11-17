@@ -11,7 +11,7 @@ lab_main() {
     || die "Required Python packages are missing"
 
   step 3 "Java (prerequisite for Hadoop)"
-  if ensure_java "8 11 17"; then note_ok "Java $JAVA_MAJOR at $JAVA_HOME"; else note_warn "No JDK found. Labs 3 to 7 need one (sudo apt install openjdk-8-jdk)."; fi
+  if ensure_java "8 11 17"; then note_ok "Java $JAVA_MAJOR at $JAVA_HOME"; else note_warn "No JDK found. Type S in the menu (Setup) to install Java 8."; fi
 
   step 4 "Single-node Hadoop"
   if ensure_tool hadoop; then
@@ -20,7 +20,7 @@ lab_main() {
     run_sh "$HADOOP_HOME/bin/hadoop version | head -n 3"
     note_ok "Hadoop found at $HADOOP_HOME"
   else
-    note_warn "Hadoop not found. Labs 3, 4 and 7 will try to locate it again or report it as missing."
+    note_warn "Hadoop is not installed. Type S in the menu (Setup) to install it."
   fi
 
   lab_workdir lab01

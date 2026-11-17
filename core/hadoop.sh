@@ -115,6 +115,14 @@ ensure_hadoop() {
   fi
   ok "HDFS command: ${HDFS_CLI[*]}"
 
+  # the runner's own copy always gets the runner's configuration (a hand-edited
+  # or half-written core-site.xml is replaced, the old file is kept as a backup)
+  case "$(readlink -f "$HADOOP_HOME")" in
+    "$(readlink -f "$STACK_DIR")"/*)
+      if [ "$AUTO_WRITE_HADOOP_CONF" = 1 ] && ! grep -qs 'written by bigdata-lab-runner' "$HADOOP_CONF_DIR/core-site.xml"; then
+        write_pseudo_config
+      fi ;;
+  esac
   local fs; fs=$(hconf fs.defaultFS)
   if [ -z "$fs" ] || [ "$fs" = "file:///" ]; then
     fail "fs.defaultFS is not configured (Hadoop would use the local filesystem, not HDFS)"
@@ -247,6 +255,12 @@ wait_hdfs() {
   local i=0
   while [ "$i" -lt "$SERVICE_TIMEOUT" ]; do
     if hproc_running NameNode && hproc_running DataNode && hdfs_alive; then return 0; fi
+    # a NameNode that is gone 15 s after its start has failed (bad data dir, port in use):
+    # waiting longer does not help, the caller repairs it
+    if [ "$i" -ge 15 ] && ! pgrep -f 'Dproc_namenode' >/dev/null 2>&1; then
+      warn "The NameNode stopped right after starting"
+      return 1
+    fi
     sleep 3; i=$((i + 3))
   done
   return 1
@@ -269,7 +283,7 @@ fix_datanode_clusterid() {
     [ -d "$d/current" ] || return 1
     fixmsg "Resetting DataNode storage $d/current (lab data only) and restarting the DataNode"
     _daemon stop datanode
-    run rm -rf "$d/current"
+    wipe_dir "$d/current"
     return 0
   fi
   warn "Last DataNode log lines ($log):"; tail -n 20 "$log"
@@ -299,16 +313,51 @@ stop_hdfs_of() {
   return 0
 }
 
+# stop_foreign_hadoop : HDFS/YARN daemons started from ANOTHER Hadoop copy hold
+# the ports (9000, 9870 ...) and do not answer this copy. Stop them.
+stop_foreign_hadoop() {
+  local mine pid args stuck=0
+  mine=$(readlink -f "$HADOOP_HOME")
+  while read -r pid args; do
+    [ -n "$pid" ] || continue
+    case "$args" in *"$mine/"*|*"$HADOOP_HOME/"*) continue ;; esac
+    fail "A Hadoop daemon from another installation is running (pid $pid, user $(ps -o user= -p "$pid" 2>/dev/null))"
+    note_fix "Stopping it so the lab's own Hadoop can start"
+    kill_pid "$pid"
+    [ -d "/proc/$pid" ] && stuck=1
+  done < <(ps -eo pid=,args= | grep -E 'Dproc_(namenode|datanode|secondarynamenode|resourcemanager|nodemanager)' | grep -v grep)
+  [ "$stuck" = 0 ] || die "Hadoop daemons of another user are running and hold the HDFS ports. Restart the PC, or ask that user to run stop-all.sh."
+}
+
+# _hdfs_reset : last resort when HDFS does not start with the data that is on
+# disk (written by another Hadoop version, half formatted, damaged). Only the
+# runner's own data directory is ever removed; it holds lab data only.
+_hdfs_reset() {
+  case "$NN_DIR" in "$HADOOP_DATA_DIR"/*) ;; *) return 1 ;; esac
+  fail "HDFS does not start with the existing data in $HADOOP_DATA_DIR"
+  note_fix "Removing the old HDFS data (lab data only), formatting the NameNode and starting again"
+  local d
+  for d in secondarynamenode datanode namenode; do _daemon stop "$d" >/dev/null 2>&1; done
+  pkill -f "Dproc_(namenode|datanode|secondarynamenode).*$HADOOP_HOME/" 2>/dev/null; sleep 2
+  for d in namenode datanode tmp; do
+    wipe_dir "$HADOOP_DATA_DIR/$d"; mkdir -p "$HADOOP_DATA_DIR/$d"
+  done
+  run "$HADOOP_HOME/bin/hdfs" namenode -format -force -nonInteractive || return 1
+  start_hdfs_daemons 0
+  wait_hdfs
+}
+
 ensure_hdfs_running() {
   ensure_hadoop || return 1
   check "HDFS services"
+  stop_foreign_hadoop
   run jps || true
   if hproc_running NameNode && hproc_running DataNode && hdfs_alive; then
     note_ok "NameNode and DataNode already running"
     hdfs_exit_safemode
     return 0
   fi
-  fail "HDFS is not fully running"
+  info "HDFS is not running yet"
   [ "$AUTO_START_SERVICES" = 1 ] || die "AUTO_START_SERVICES=0, start HDFS manually"
 
   # a NameNode from ANOTHER Hadoop copy (different directory or config) does not answer this copy
@@ -337,7 +386,12 @@ ensure_hdfs_running() {
   else
     ok "NameNode already formatted ($NN_DIR)"
     if [ ! -w "$NN_DIR/current" ]; then
-      die "The HDFS name directory $NN_DIR belongs to another user ($(stat -c %U "$NN_DIR/current" 2>/dev/null)). Run the labs as that user, or start HDFS as that user first."
+      [ "$AUTO_WRITE_HADOOP_CONF" = 1 ] || die "The HDFS name directory $NN_DIR belongs to another user ($(stat -c %U "$NN_DIR/current" 2>/dev/null))."
+      fail "The HDFS name directory $NN_DIR belongs to another user ($(stat -c %U "$NN_DIR/current" 2>/dev/null))"
+      HADOOP_DATA_DIR="$HOME/hadoopdata_$(id -un)"
+      note_fix "Using a new HDFS data directory for this user: $HADOOP_DATA_DIR"
+      write_pseudo_config
+      namenode_needs_format && { run "$HADOOP_HOME/bin/hdfs" namenode -format -force -nonInteractive || die "NameNode format failed"; }
     fi
   fi
   fixmsg "Starting HDFS"
@@ -352,9 +406,9 @@ ensure_hdfs_running() {
   if [ "$up" = 0 ]; then
     if fix_datanode_clusterid; then
       start_hdfs_daemons 0
-      wait_hdfs || die "HDFS did not come up after the DataNode reset. Check $HADOOP_HOME/logs"
+      wait_hdfs || _hdfs_reset || die "HDFS did not come up. Check $HADOOP_HOME/logs"
     else
-      die "HDFS did not come up. Check $HADOOP_HOME/logs"
+      _hdfs_reset || die "HDFS did not come up. Check $HADOOP_HOME/logs"
     fi
   fi
   run jps

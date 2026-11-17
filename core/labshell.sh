@@ -7,8 +7,8 @@ RUNNER_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 LAB_ID="${1:?usage: labshell.sh <lab-id>}"
 
 . "$RUNNER_DIR/core/common.sh"
+sanitize_env
 . "$RUNNER_DIR/core/terminal.sh"
-. "$RUNNER_DIR/core/sudo.sh"
 . "$RUNNER_DIR/core/detect.sh"
 . "$RUNNER_DIR/core/services.sh"
 . "$RUNNER_DIR/core/hadoop.sh"

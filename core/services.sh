@@ -29,7 +29,15 @@ wait_for_port() {   # wait_for_port PORT [SECONDS]
   done
   return 1
 }
-kill_pid() { kill "$1" 2>/dev/null; sleep 2; kill -0 "$1" 2>/dev/null && kill -9 "$1" 2>/dev/null; return 0; }
+# kill_pid PID : stop a process and wait until it is really gone (TERM, then KILL)
+kill_pid() {
+  local i
+  kill "$1" 2>/dev/null
+  for i in 1 2 3 4 5 6; do [ -d "/proc/$1" ] || return 0; sleep 0.5; done
+  kill -9 "$1" 2>/dev/null
+  for i in 1 2 3 4 5 6; do [ -d "/proc/$1" ] || return 0; sleep 0.5; done
+  return 0
+}
 
 # free_port PORT NAME_PATTERN : if a stale helper of ours holds the port, kill it.
 # Returns 1 if the port is used by something else.
@@ -57,66 +65,6 @@ bg_start() {
   local pid=$!
   echo "$pid" > "$STATE_DIR/$name.pid"
   info "$name started (pid $pid), log: $log"
-}
-
-# _mongod_start_local : start mongod as the current user with its data in the
-# lab work directory. Needs no systemd and no root (WSL, containers, lab PCs).
-_mongod_start_local() {
-  local d="$LAB_WORKDIR_BASE/mongodata"; mkdir -p "$d"
-  fixmsg "Starting a local mongod (dbpath $d)"
-  # use a private socket dir: /tmp/mongodb-27017.sock may be owned by another user and block the start
-  run mongod --fork --dbpath "$d" --logpath "$d/mongod.log" --bind_ip 127.0.0.1 --port 27017 --unixSocketPrefix "$d" \
-    || { warn "mongod did not start. Last log lines:"; tail -n 8 "$d/mongod.log" 2>/dev/null | cut -c1-200; }
-}
-
-# ---- MongoDB ---------------------------------------------------------------
-ensure_mongodb() {
-  check "MongoDB shell"
-  MONGO_SHELL=""
-  if have mongosh; then MONGO_SHELL=mongosh; elif have mongo; then MONGO_SHELL=mongo; fi
-  if [ -n "$MONGO_SHELL" ]; then
-    run_sh "$MONGO_SHELL --version 2>&1 | head -n 3"
-  else
-    fail "No MongoDB shell found (mongosh / mongo)"
-  fi
-
-  check "MongoDB server (port 27017)"
-  if port_in_use 27017; then
-    note_ok "mongod reachable on 27017 (reusing the running server)"
-  else
-    fail "MongoDB server is not running"
-    [ "$AUTO_START_SERVICES" = 1 ] || return 1
-    # systemd only helps when it is really running (not in WSL without systemd, not in a container)
-    local unit=""
-    if have systemctl && [ -d /run/systemd/system ]; then
-      for unit in mongod mongodb ""; do
-        [ -n "$unit" ] || break
-        systemctl list-unit-files 2>/dev/null | grep -qE "^$unit\.service" && break
-      done
-    fi
-    if [ -z "$unit" ] && ! have mongod; then
-      fail "mongod is not installed"
-      note_fail "MongoDB is missing. Choose S (Setup) in the menu to install it, then run this lab again."
-      return 1
-    fi
-    if [ -n "$unit" ]; then
-      fixmsg "Starting $unit through systemd"
-      ensure_sudo && run sudo systemctl start "$unit"
-      wait_for_port 27017 20 || warn "The $unit service did not open port 27017"
-    fi
-    if ! port_in_use 27017 && have mongod; then
-      _mongod_start_local
-    fi
-    wait_for_port 27017 60 || die "MongoDB did not start. Check $LAB_WORKDIR_BASE/mongodata/mongod.log"
-    note_fix "MongoDB server started"
-  fi
-
-  if [ -z "$MONGO_SHELL" ]; then
-    fixmsg "Trying to install a MongoDB shell"
-    ensure_sudo && { run sudo apt-get install -y mongodb-mongosh || run sudo apt-get install -y mongodb-clients; }
-    if have mongosh; then MONGO_SHELL=mongosh; elif have mongo; then MONGO_SHELL=mongo; else die "No MongoDB shell available"; fi
-  fi
-  note_ok "MongoDB ready (shell: $MONGO_SHELL)"
 }
 
 # ---- Kafka -----------------------------------------------------------------
@@ -159,28 +107,58 @@ ensure_kafka() {
   fi
   info "Kafka mode: $KAFKA_MODE (config: $KAFKA_CFG)"
 
-  check "Kafka broker on port $KAFKA_PORT"
-  if port_in_use "$KAFKA_PORT"; then
-    local pid cmd; pid=$(port_pid "$KAFKA_PORT"); cmd=$(pid_cmd "$pid")
-    if [ -z "$pid" ] || echo "$cmd" | grep -qi kafka; then
-      note_ok "Kafka broker already running${pid:+ (pid $pid)}. Reusing it."
-      return 0
-    fi
-    die "Port $KAFKA_PORT is used by another program: $cmd"
+  # The broker and ZooKeeper get their own configuration and data directory.
+  # /tmp/kafka-logs and /tmp/zookeeper may hold data of another Kafka version,
+  # and "localhost" listeners avoid errors when the PC's host name does not resolve.
+  if [ "$KAFKA_MODE" = zookeeper ]; then
+    KAFKA_DATA="$LAB_WORKDIR_BASE/kafka-data"; mkdir -p "$KAFKA_DATA"
+    grep -vE '^(log\.dirs|listeners|advertised\.listeners|zookeeper\.connect)=' "$KAFKA_CFG" > "$KAFKA_DATA/server.properties"
+    printf 'log.dirs=%s\nlisteners=PLAINTEXT://localhost:%s\nzookeeper.connect=localhost:2181\n' \
+      "$KAFKA_DATA/kafka-logs" "$KAFKA_PORT" >> "$KAFKA_DATA/server.properties"
+    grep -vE '^dataDir=' "$KAFKA_HOME/config/zookeeper.properties" > "$KAFKA_DATA/zookeeper.properties"
+    printf 'dataDir=%s\n' "$KAFKA_DATA/zookeeper" >> "$KAFKA_DATA/zookeeper.properties"
+    KAFKA_CFG="$KAFKA_DATA/server.properties"; ZK_CFG="$KAFKA_DATA/zookeeper.properties"
   fi
-  fail "No Kafka broker on port $KAFKA_PORT"
+
+  check "Kafka broker on port $KAFKA_PORT"
+  local pid cmd
+  if port_in_use "$KAFKA_PORT"; then
+    pid=$(port_pid "$KAFKA_PORT"); cmd=$(pid_cmd "$pid")
+    case "$cmd" in
+      *"$KAFKA_HOME/"*) note_ok "Kafka broker already running (pid $pid). Reusing it."; return 0 ;;
+    esac
+    if [ -n "$pid" ] && echo "$cmd" | grep -qi kafka; then
+      fail "A Kafka broker from another installation is running on port $KAFKA_PORT (pid $pid)"
+      note_fix "Stopping it so the lab's own broker can start"
+      kill_pid "$pid"; sleep 2
+      port_in_use "$KAFKA_PORT" && die "Port $KAFKA_PORT is held by a Kafka broker of another user. Restart the PC, or ask that user to stop it."
+    elif [ -z "$pid" ]; then
+      note_ok "A Kafka broker is already listening on port $KAFKA_PORT. Reusing it."
+      return 0
+    else
+      die "Port $KAFKA_PORT is used by another program: $cmd"
+    fi
+  fi
+  info "No Kafka broker on port $KAFKA_PORT yet"
   [ "$AUTO_START_SERVICES" = 1 ] || return 1
 
   if [ "$KAFKA_MODE" = zookeeper ]; then
     check "ZooKeeper on port 2181"
     if port_in_use 2181; then
-      ok "ZooKeeper already running"
-    else
-      fixmsg "Starting ZooKeeper"
-      bg_start zookeeper "$LAB_WORK/zookeeper.log" "$KAFKA_HOME/bin/zookeeper-server-start.sh" "$KAFKA_HOME/config/zookeeper.properties"
-      wait_for_port 2181 60 || die "ZooKeeper did not start. See $LAB_WORK/zookeeper.log"
-      ok "ZooKeeper is up"
+      pid=$(port_pid 2181); cmd=$(pid_cmd "$pid")
+      case "$cmd" in
+        *"$KAFKA_HOME/"*) ok "ZooKeeper already running" ;;
+        *)
+          if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            fail "A ZooKeeper from another installation is running on port 2181 (pid $pid)"
+            note_fix "Stopping it so the lab's own ZooKeeper can start"
+            kill_pid "$pid"; sleep 2
+          else
+            warn "Port 2181 is in use by a ZooKeeper this user cannot stop. Using it."
+          fi ;;
+      esac
     fi
+    port_in_use 2181 || _zookeeper_start || die "ZooKeeper did not start. See $LAB_WORK/zookeeper.log"
   else
     local logdir; logdir=$(kafka_prop "$KAFKA_CFG" log.dirs); logdir=${logdir:-/tmp/kraft-combined-logs}
     if [ ! -f "$logdir/meta.properties" ]; then
@@ -192,29 +170,34 @@ ensure_kafka() {
     fi
   fi
 
-  fixmsg "Starting the Kafka broker"
   if ! _kafka_start_broker; then
-    if grep -q "InconsistentClusterIdException" "$LAB_WORK/kafka-server.log" 2>/dev/null; then
-      fail "Broker refused to start: cluster ID mismatch (old log directory from another ZooKeeper instance)"
-      local ld; ld=$(kafka_prop "$KAFKA_CFG" log.dirs); ld=${ld:-/tmp/kafka-logs}
-      fixmsg "Removing stale Kafka log directory $ld and retrying"
-      run rm -rf "$ld"
-      _kafka_start_broker || die "Kafka still not up. See $LAB_WORK/kafka-server.log"
-    elif grep -q "NodeExistsException" "$LAB_WORK/kafka-server.log" 2>/dev/null; then
-      # the last broker was killed (window closed, power off): ZooKeeper still holds
-      # its registration until the old session expires (18 s by default)
+    local try=0
+    # the last broker was killed (window closed, power off): ZooKeeper still holds
+    # its registration until the old session expires (18 s by default)
+    while grep -q "NodeExistsException" "$LAB_WORK/kafka-server.log" 2>/dev/null && [ "$try" -lt 3 ]; do
+      try=$((try + 1))
       fail "Broker refused to start: ZooKeeper still holds the registration of the previous broker"
-      local try
-      for try in 1 2 3; do
-        note_fix "Waiting 20 s for ZooKeeper to drop the old registration, then starting the broker again ($try/3)"
-        sleep 20
-        _kafka_start_broker && break
-        [ "$try" = 3 ] && { warn "Last lines of the broker log:"; tail -n 15 "$LAB_WORK/kafka-server.log"; die "Kafka broker did not start"; }
-      done
-    else
-      warn "Last lines of the broker log:"; tail -n 15 "$LAB_WORK/kafka-server.log"
-      die "Kafka broker did not start"
+      note_fix "Waiting 20 s for ZooKeeper to drop it, then starting the broker again ($try/3)"
+      sleep 20
+      _kafka_start_broker && { note_ok "Kafka broker started on port $KAFKA_PORT"; return 0; }
+    done
+    if [ "$KAFKA_MODE" = zookeeper ]; then
+      # anything else (cluster id mismatch, data of another version, damaged logs):
+      # the data is lab data only, so start again from an empty directory
+      fail "The Kafka broker does not start with the existing data in $KAFKA_DATA"
+      note_fix "Removing the old Kafka and ZooKeeper data and starting both again"
+      pkill -f "$KAFKA_HOME/.*kafka\.Kafka" 2>/dev/null; pkill -f "$KAFKA_HOME/.*QuorumPeerMain" 2>/dev/null; sleep 3
+      wipe_dir "$KAFKA_DATA/kafka-logs" "$KAFKA_DATA/zookeeper"
+      port_in_use 2181 || _zookeeper_start || die "ZooKeeper did not start. See $LAB_WORK/zookeeper.log"
+      _kafka_start_broker && { note_ok "Kafka broker started on port $KAFKA_PORT"; return 0; }
     fi
+    warn "Last lines of the broker log:"; tail -n 15 "$LAB_WORK/kafka-server.log"
+    die "Kafka broker did not start"
   fi
-  note_fix "Kafka broker started on port $KAFKA_PORT"
+  note_ok "Kafka broker started on port $KAFKA_PORT"
+}
+
+_zookeeper_start() {
+  bg_start zookeeper "$LAB_WORK/zookeeper.log" "$KAFKA_HOME/bin/zookeeper-server-start.sh" "${ZK_CFG:-$KAFKA_HOME/config/zookeeper.properties}"
+  wait_for_port 2181 60
 }

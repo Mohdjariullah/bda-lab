@@ -74,9 +74,7 @@ lab_main() {
   locate_home pig; h=$LOCATED_HOME; if [ -n "$h" ]; then _d_ok "PIG_HOME = $h ($(version_from_path "$h"))"; _d_item "pig core jar" "ls '$h'/pig-*core*.jar"; else _d_bad "Pig not found"; fi
 
   echo; echo "${C_BOLD}MONGODB${C_RESET}"
-  _d_item "shell (mongosh or mongo)" "have mongosh || have mongo"
-  _d_item "server (mongod)" "have mongod || port_in_use 27017"
-  if port_in_use 27017; then _d_ok "mongod listening on 27017"; else warn "mongod not running (the lab starts it)"; fi
+  info "Not used on this PC: Lab 6 only shows the script, MongoDB runs on Windows"
 
   echo; echo "${C_BOLD}HIVE${C_RESET}"
   locate_home hive; h=$LOCATED_HOME; if [ -n "$h" ]; then _d_ok "HIVE_HOME = $h ($(version_from_path "$h"))"; _d_item "hive-exec jar" "ls '$h'/lib/hive-exec-*.jar"; _d_item "schematool" "[ -x '$h/bin/schematool' ]"; else _d_bad "Hive not found"; fi
@@ -105,7 +103,6 @@ lab_main() {
 
   echo; echo "${C_BOLD}PERMISSIONS${C_RESET}"
   _d_item "lab work directory writable ($LAB_WORKDIR_BASE)" "mkdir -p '$LAB_WORKDIR_BASE' && [ -w '$LAB_WORKDIR_BASE' ]"
-  if sudo -n true 2>/dev/null; then _d_ok "sudo already authenticated"; else warn "sudo will ask for your password when a lab needs it"; fi
   local mp free
   for mp in "$HOME" /tmp; do
     free=$(df -Pk "$mp" 2>/dev/null | awk 'NR==2 {printf "%d", $4/1024}')

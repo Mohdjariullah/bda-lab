@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# core/common.sh - shared helpers. Sourced by lab-runner, labshell.sh, askpass.sh, diagnostics.sh
+# core/common.sh - shared helpers. Sourced by lab-runner and labshell.sh
 # Nothing in this file prints on its own; it only defines functions and variables.
 
 [ -n "${__COMMON_LOADED:-}" ] && return 0
@@ -37,6 +37,34 @@ chmod 700 "$STATE_DIR" 2>/dev/null || true
 : "${KAFKA_PORT:=9092}"
 : "${AUTO_SETUP:=1}"
 : "${STACK_DIR:=$HOME/bigdata_stack}"
+: "${REUSE_INSTALLED:=0}"
+# versions of the runner's own copies (tested together)
+: "${HADOOP_VER:=3.3.6}"
+: "${PIG_VER:=0.17.0}"
+: "${HIVE_VER:=3.1.3}"
+: "${SPARK_VER:=3.5.3}"
+: "${KAFKA_INSTALL_VER:=3.6.2}"
+: "${KAFKA_SCALA_VER:=2.13}"
+
+# sanitize_env : forget everything a previous installation left in the shell
+# (~/.bashrc exports of HADOOP_HOME, JAVA_HOME, CLASSPATH, PATH entries ...).
+# A PC that already has another Hadoop, Hive, Spark or Kafka usually carries
+# such settings, and they are the cause of "version mismatch" and "environment
+# not configured" errors. The runner sets every variable itself, per lab.
+sanitize_env() {
+  unset HADOOP_HOME HADOOP_PREFIX HADOOP_INSTALL HADOOP_CONF_DIR HADOOP_CLASSPATH HADOOP_OPTS \
+        HADOOP_COMMON_HOME HADOOP_HDFS_HOME HADOOP_MAPRED_HOME HADOOP_YARN_HOME YARN_HOME YARN_CONF_DIR \
+        HADOOP_LOG_DIR HADOOP_PID_DIR HADOOP_USER_NAME HADOOP_HEAPSIZE HADOOP_HEAPSIZE_MAX \
+        HADOOP_COMMON_LIB_NATIVE_DIR HADOOP_ROOT_LOGGER HADOOP_CLIENT_OPTS \
+        PIG_HOME PIG_CLASSPATH PIG_CONF_DIR PIG_OPTS \
+        HIVE_HOME HIVE_CONF_DIR HIVE_AUX_JARS_PATH HCAT_HOME HIVE_OPTS \
+        SPARK_HOME SPARK_CONF_DIR SPARK_LOCAL_IP SPARK_DIST_CLASSPATH PYSPARK_PYTHON PYSPARK_DRIVER_PYTHON \
+        PYSPARK_SUBMIT_ARGS PYSPARK_DRIVER_PYTHON_OPTS \
+        KAFKA_HOME KAFKA_OPTS KAFKA_HEAP_OPTS KAFKA_LOG4J_OPTS ZOOKEEPER_HOME ZOOCFGDIR \
+        JAVA_HOME JRE_HOME JDK_HOME CLASSPATH _JAVA_OPTIONS JDK_JAVA_OPTIONS PYTHONPATH PYTHONHOME
+  # PATH is left alone: every lab puts the runner's own bin folders FIRST in
+  # PATH (path_prepend), so another copy further back can never be picked.
+}
 
 # ---- lab table -------------------------------------------------------------
 LAB_IDS=(01 02 03 04a 04b 05 06 07 08 09 10)
@@ -172,7 +200,12 @@ log_has() { [ -n "${LAB_LOG:-}" ] && tail -n "${2:-200}" "$LAB_LOG" | grep -qE "
 # ---- misc helpers ----------------------------------------------------------
 have()   { command -v "$1" >/dev/null 2>&1; }
 die()    { note_fail "$*"; exit 1; }
-path_prepend() { case ":$PATH:" in *":$1:"*) ;; *) PATH="$1:$PATH" ;; esac; export PATH; }
+# path_prepend DIR : DIR becomes the FIRST entry (also when it is already further back,
+# so a wrong copy earlier in PATH can never win)
+path_prepend() {
+  local rest; rest=$(printf '%s' "$PATH" | tr ':' '\n' | grep -vxF "$1" | paste -sd: -)
+  PATH="$1${rest:+:$rest}"; export PATH
+}
 path_without() { printf '%s' "$PATH" | tr ':' '\n' | grep -v "^$1" | paste -sd: -; }
 version_ge()   { [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n1)" = "$2" ]; }
 version_from_path() { basename "$1" | grep -oE '[0-9]+(\.[0-9]+)+' | tail -n1; }
@@ -194,6 +227,19 @@ lab_workdir() {   # lab_workdir NAME : create and enter the lab's work directory
   cd "$LAB_WORK" || die "Cannot enter $LAB_WORK"
 }
 
+# wipe_dir DIR... : delete lab data directories. Refuses anything that is not
+# an absolute path at least three levels deep (never /, /tmp, /home, $HOME).
+wipe_dir() {
+  local d
+  for d in "$@"; do
+    case "$d" in
+      /*/*/*) [ "$d" != "$HOME" ] && [ -e "$d" ] && rm -rf -- "$d" ;;
+      *) warn "Refusing to delete '$d' (not a lab data directory)" ;;
+    esac
+  done
+  return 0
+}
+
 # detached CMD... : run CMD in its own session, cut off from this terminal.
 # A daemon started from a lab window is otherwise killed (SIGHUP) the moment
 # the window is closed, and the next lab finds HDFS or YARN gone.
@@ -213,7 +259,6 @@ cleanup_background() {
   for p in "${BG_PIDS[@]:-}"; do
     [ -n "$p" ] && kill "$p" 2>/dev/null
   done
-  [ -n "${SUDO_KEEPALIVE_PID:-}" ] && kill "$SUDO_KEEPALIVE_PID" 2>/dev/null
   return 0
 }
 

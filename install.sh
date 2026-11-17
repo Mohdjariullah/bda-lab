@@ -5,8 +5,9 @@
 #   cd bda-lab
 #   ./install.sh            # makes everything executable, adds a desktop launcher, opens the menu
 #
-# It changes nothing on the system. It only sets file permissions inside this
-# folder and writes one .desktop launcher for your user.
+# It only sets file permissions inside this folder and writes one .desktop
+# launcher for your user. The lab software is installed by the runner itself,
+# into ~/bigdata_stack, the first time it starts (no password needed).
 set -e
 HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 
