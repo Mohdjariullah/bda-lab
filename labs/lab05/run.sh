@@ -33,6 +33,10 @@ _write_script() {   # _write_script local|mapreduce
 }
 
 _run_pig_local() {
+  # "pig -x local" does not read mapred-site.xml, so it would stage its job in
+  # /tmp/hadoop/mapred/staging, a folder shared by all users of the PC. When it
+  # belongs to someone else the job fails with "ENOENT". Use a private folder.
+  export PIG_OPTS="-Dmapreduce.jobtracker.staging.root.dir=$LAB_WORK/staging"
   rm -rf pig_output
   if run "$PIG_HOME/bin/pig" -x local filter_script.pig; then return 0; fi
   [ -n "${HADOOP_HOME:-}" ] || return 1
@@ -49,8 +53,7 @@ lab_main() {
   local have_hadoop=0
   if ensure_tool hadoop; then
     have_hadoop=1
-    export HADOOP_CONF_DIR="$(hadoop_conf_dir)"
-    fix_hadoop_env_java
+    build_hadoop_conf
   else
     warn "Hadoop not found. Pig will use its bundled Hadoop libraries (local mode only)."
   fi

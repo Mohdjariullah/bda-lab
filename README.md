@@ -9,18 +9,27 @@ you, in the correct order, in its own terminal window. When a command fails
 (wrong `JAVA_HOME`, Hadoop not started, output folder already exists, and so
 on), the tool shows you the error, fixes it, and runs the command again.
 
-It is only Bash scripts. There is no `.exe` file. It never asks for a
-password and never asks a question: you start it, it installs what it needs
-in your own home folder, and it shows the output.
+It is only Bash scripts. There is no `.exe` file. You start it and it shows
+the output. It does not ask questions.
 
-**Other copies of Hadoop, Hive, Pig, Spark, Kafka or Java on the PC do not
-matter.** Many lab PCs already have some of them, in other versions or with a
-broken configuration ("version mismatch", "environment is not configured").
-The tool does not try to repair those. It uses its own copies in
-`~/bigdata_stack`, in versions that are tested together, ignores every
-setting the other copies left in the shell, and stops their daemons when
-they block a port. If one of its own copies gets damaged, it removes that
-copy and installs it again.
+**It uses what is already on the PC, if it works.** Many lab PCs already have
+Java, Hadoop, Hive, Pig, Spark or Kafka. The tool looks for them (first where
+`HADOOP_HOME`, `JAVA_HOME` and the other variables of your shell point, then
+the commands on `PATH`, then the disk), starts each one to test it, and uses
+the ones that work. Nothing is downloaded for those.
+
+**It downloads only what is missing or broken**, into `~/bigdata_stack`. No
+password is needed for that.
+
+**A wrong configuration on the PC does not matter.** Errors like "version
+mismatch" or "environment is not configured" come from the settings around a
+tool, not from the tool. The labs run every tool with the tool's own private
+settings (in `state/`), so the files and variables of the PC are not used and
+not changed.
+
+**The only time it asks for your password:** when Hadoop or Kafka was started
+by *another* Linux user and blocks the lab. It then asks in the lab window, so
+it can stop those processes.
 
 ```
 Window 1: LAUNCHER            Window 2: LAB WINDOW
@@ -40,7 +49,7 @@ menu + progress        --->   runs each command and
   - [5. Start the tool next time](#5-start-the-tool-next-time)
   - [6. Use the menu](#6-use-the-menu)
   - [7. What you see in the lab window](#7-what-you-see-in-the-lab-window)
-  - [8. The password window](#8-the-password-window)
+  - [8. When it asks for your password](#8-when-it-asks-for-your-password)
   - [9. When the lab is finished](#9-when-the-lab-is-finished)
   - [10. What each lab does and the output you must see](#10-what-each-lab-does-and-the-output-you-must-see)
   - [11. Problems and solutions](#11-problems-and-solutions)
@@ -61,11 +70,11 @@ You need:
 | Item | Why | How to check |
 |---|---|---|
 | Ubuntu (or another Debian-based Linux) with a desktop | The tool opens new terminal windows | You can see the desktop and the app grid |
-| Internet, the first time | The tool downloads its own Java 8, Hadoop, Pig, Hive, Spark and Kafka (about 2 GB, 5 to 30 minutes, once) | Open any web page |
-| 5 GB of free disk space in your home folder | For those downloads | Nothing to do. Setup checks it |
+| Internet, the first time | For the Python packages, and for any tool that is missing or broken on this PC (the tool downloads its own copy of that one) | Open any web page |
+| Free disk space in your home folder | Only when something must be downloaded (all tools together: about 2 GB of downloads) | Nothing to do. Setup checks it |
 
-You do **not** need a password, and you do not need to remove the Hadoop or
-Kafka that is already on the PC.
+You do not need to remove or repair the Hadoop or Kafka that is already on
+the PC.
 
 You do **not** need to know the `export` commands, `JAVA_HOME`, or how to
 start HDFS. The tool does this and shows you what it did.
@@ -141,23 +150,37 @@ Press **Enter** to open the menu now.
 The first start checks which of its own tools are already installed. Then
 the menu opens (see Step 6).
 
-**Automatic setup.** If something is missing, the tool says
-`Not installed yet: ...` and installs it at once, without asking. Everything
-goes into `~/bigdata_stack` and belongs to you, so no password is needed:
+**Automatic setup.** The first start runs Setup without asking. For Java 8,
+Hadoop, Pig, Hive, Spark and Kafka it does this:
 
-- Java 8 (only when the PC has no working JDK 8).
-- Hadoop 3.3.6, Pig 0.17.0, Hive 3.1.3, Spark 3.5.3 and Kafka 3.6.2.
-- The Python packages for labs 1, 2 and 10 (numpy, pandas, matplotlib, seaborn, kafka-python).
+1. It looks for a copy that is already on the PC.
+2. It checks the version and **starts it once**. If it works, it is used:
 
-Every tool is started once to prove that it works. A copy that does not
-start is removed and installed again.
+   ```
+   [✓] hadoop: the copy already on this PC works and is used: /usr/local/hadoop  (HADOOP_HOME in your shell, version 3.3.6). Nothing to download.
+   ```
 
-Setup ends with a **SETUP SUMMARY**: one line per tool, `[✓]` or `[✗]`. If a
-line is `[✗]`, the line above the summary says why (for example no internet).
-Choose **S** again after you fix it. What already works is kept.
+3. If a copy cannot be used, it says why and goes on:
 
-To run it again later, choose **S** in the menu or type `./lab-runner setup`.
-To turn the automatic start off, set `AUTO_SETUP=0` in
+   ```
+   [→] hadoop: /opt/hadoop-2.7.3 (HADOOP_HOME in your shell) cannot be used: version 2.7.3, the labs need Hadoop 3.x
+   ```
+
+4. Only when no copy works, it downloads its own into `~/bigdata_stack`
+   (Hadoop 3.3.6, Pig 0.17.0, Hive 3.1.3, Spark 3.5.3, Kafka 3.6.2, Java 8).
+
+Then it installs the Python packages for labs 1, 2 and 10 for your user
+(numpy, pandas, matplotlib, seaborn, kafka-python).
+
+Setup ends with a **SETUP SUMMARY**: one line per tool, `[✓]` or `[✗]`, with
+the folder that is used. If a line is `[✗]`, the lines above say why (for
+example no internet). Choose **S** again after you fix it.
+
+If a tool stops working later, the lab notices it, runs Setup again by
+itself, and then runs the lab again.
+
+To run Setup by hand, choose **S** in the menu or type `./lab-runner setup`.
+To never use the copies on the PC, set `REUSE_INSTALLED=0` in
 `config/environment.conf`.
 
 ## 5. Start the tool next time
@@ -303,10 +326,27 @@ openjdk version "1.8.0_462"
 Do not close the lab window while the lab runs. If you close it, the lab stops
 and the launcher shows `The lab window closed before the lab finished`.
 
-## 8. The password window
+## 8. When it asks for your password
 
-There is none any more. Nothing the labs do needs administrator rights, so
-the tool never asks for your password.
+Almost never. The labs do not need administrator rights.
+
+There is one case. Another Linux user (for example the account that was used
+in the last class) started Hadoop or Kafka on this PC, and those programs
+are still running and block the lab. Your account cannot stop the programs
+of another user. Then the **lab window** shows:
+
+```
+This Hadoop daemon (pid 4711) was started by the user 'hduser' and blocks this lab.
+Administrator rights are needed to stop it.
+Type your Linux password and press ENTER (the letters do not show).
+[sudo] password for student:
+```
+
+Type your Linux password and press **Enter**. The tool stops that program
+and the lab continues. The password goes directly to `sudo` and is not saved.
+
+If the password is not accepted, or your account may not use `sudo`, the lab
+stops and says so. Restart the PC and run the lab again.
 
 ## 9. When the lab is finished
 
@@ -530,8 +570,9 @@ the tool finds on your PC. It changes nothing.
 | The menu shows, but no second window opens. The lab runs in the same window | The tool did not find a graphical terminal. This is OK: the lab still runs, only in one window |
 | `Lab N failed` | Press `L` in the menu, type the lab number, and read the **last** `[✗]` line. It tells you what failed |
 | `... is not installed` or `... does not start` | Type `S` in the menu (Setup). It installs the tool, or replaces a damaged copy |
-| The PC already has another Hadoop / Kafka and it gives errors | Nothing to do. The tool does not use it |
-| `Hadoop daemons of another user are running` | Another Linux user started Hadoop on this PC. Restart the PC and run the lab again |
+| The PC already has another Hadoop / Kafka and it gives errors | Nothing to do. Setup tests it. If it does not work, the tool downloads its own copy |
+| The lab window asks for a password | Another user's Hadoop or Kafka blocks the lab. Type your Linux password (see section 8) |
+| `Hadoop daemons of another user are still running` | The password was not accepted. Restart the PC and run the lab again |
 | The menu shows `[!] Not installed: ...` | Type `S` in the menu (Setup). Read the SETUP SUMMARY at the end |
 | Setup stops at a download | Check the internet and type `S` again. The download continues from where it stopped |
 | You want the lab in the same window (no second window) | Type `./lab-runner --here 5`, or set `LAB_NEW_WINDOW=0` in `config/environment.conf` |
@@ -540,22 +581,18 @@ the tool finds on your PC. It changes nothing.
 | `Port 9092 is already in use by: ...` | Another program uses this port. Close that program, or restart the PC |
 | HDFS problems after you restart the PC | Only run the lab again. The tool starts HDFS by itself |
 
-**Other copies of Hadoop, Kafka and so on**
+**Which copy of a tool is used**
 
-The tool uses only its own copies in `~/bigdata_stack`. You do not have to
-remove anything else from the PC, and the tool does not delete anything
-outside `~/bigdata_stack`, `~/bigdata_labs` and `~/hadoopdata`.
-
-If you really want it to use a copy that is already on the PC, write the
-folder in `config/environment.conf`:
+Type `S` (Setup). The SETUP SUMMARY shows the folder of every tool. To force
+a different copy, write its folder in `config/environment.conf`:
 
 ```
 CFG_HADOOP_HOME="/home/cse/Desktop/hadoop-3.4.0"
 CFG_JAVA_HOME="/usr/lib/jvm/java-8-openjdk-amd64"
 ```
 
-Or set `REUSE_INSTALLED=1` there: the tool then searches the PC and installs
-its own copy only for tools it cannot find or that do not start.
+The tool never changes or deletes the copies on the PC. It writes only into
+its own folder, `~/bigdata_stack`, `~/bigdata_labs` and `~/hadoopdata`.
 
 ## 12. Update, reset and uninstall
 
@@ -622,33 +659,43 @@ Supported terminal emulators: gnome-terminal, xfce4-terminal, konsole,
 mate-terminal, tilix, lxterminal, terminator, xterm, and
 `x-terminal-emulator`. Set `TERM_EMULATOR` in the config to force one.
 
-## Why it works on a PC that already has broken installs
+## How it deals with what is already on the PC
 
-Errors like "version mismatch" or "environment is not configured" on a lab
-PC have four sources. Each one is removed at the root instead of patched:
+**Choosing a copy** (`core/setup/run.sh`, `candidate_homes` in `core/detect.sh`).
+For each tool the candidates are, in this order: the folder in the shell
+variable (`HADOOP_HOME`, `HIVE_HOME` ...), the command on `PATH`, and a disk
+search under `SEARCH_ROOTS`. A candidate is taken when
+
+1. it is a complete installation (launcher and jars),
+2. its version can run the labs: Hadoop 3.x, Pig 0.16+, Hive 2.3 to 3.x,
+   Spark 3.x, Kafka 2.x or 3.x with ZooKeeper, Java 8,
+3. it starts: `hadoop version`, `pig -version`, `hive --version`,
+   `spark-submit --version`, `kafka-topics.sh --version`, run the same way
+   the labs run it.
+
+The first one that passes is stored in `state/detected.env`. If none passes,
+the runner's own copy is downloaded to `~/bigdata_stack`. A lab that finds
+its tool no longer starts clears that entry; the launcher then runs Setup and
+the lab again.
+
+**Running it with private settings.** "Version mismatch" and "environment is
+not configured" errors come from four places. None of them is used:
 
 | Source of the error | What the runner does |
 |---|---|
-| The tool on the PC is another version, half installed, or misconfigured | Never used. The runner has its own copy of every tool in `~/bigdata_stack` (versions tested together), found by a fixed path, not by searching |
-| `~/.bashrc` exports (`HADOOP_HOME`, `JAVA_HOME`, `CLASSPATH`, `HADOOP_CONF_DIR`, `PATH` entries ...) | `sanitize_env` unsets all of them at the start of every lab. The runner then sets its own values and puts its own `bin` folders first in `PATH` |
-| Daemons of the other copy hold the ports (NameNode on 9000, Kafka on 9092, ZooKeeper on 2181) | Stopped (they are not deleted). If they belong to another Linux user they cannot be stopped without a password: the lab then says so |
-| Data written by another version (`/tmp/kafka-logs`, `/tmp/zookeeper`, HDFS name dir, Hive `metastore_db`) | The runner uses its own data directories (`~/hadoopdata`, `~/bigdata_labs/kafka-data`, `~/bigdata_labs/lab07/metastore_db`). If its own data does not load, it is removed and created again (lab data only) |
+| `~/.bashrc` exports (`HADOOP_HOME`, `JAVA_HOME`, `CLASSPATH`, `HADOOP_CONF_DIR` ...) | Read once as a hint where the tools are, then unset for every lab (`sanitize_env`). The runner sets its own values and puts the chosen `bin` folders first in `PATH` |
+| The tool's own configuration files (`core-site.xml` for another host, `hadoop-env.sh` with an old `JAVA_HOME`, `hive-site.xml` for MySQL, a cluster `spark-defaults.conf`) | Not used and not edited. Hadoop gets `state/hadoop-conf` (a copy plus the lab's `hdfs://localhost:9000`, local MapReduce, its own log and pid folders), Hive gets `state/hive-conf` (embedded Derby), Spark gets an empty `state/spark-conf`, Kafka gets `~/bigdata_labs/kafka-data/*.properties` |
+| Folders shared by all users in `/tmp` (`/tmp/hadoop` job staging, `/tmp/kafka-logs`, `/tmp/zookeeper`) or owned by root (logs inside the installation) | Everything is redirected to `~/hadoopdata` and `~/bigdata_labs`. If the runner's own data does not load, it is removed and created again (lab data only) |
+| Daemons that hold the ports: another Hadoop copy, a Hadoop that does not answer the lab's configuration, another Kafka or ZooKeeper | Stopped (nothing is deleted). Processes of this user are stopped directly. For processes of another user the lab window asks for the password (`sudo kill`) |
 
-Setup starts every tool once (`hadoop version`, `pig -version`,
-`hive --version`, `spark-submit --version`, `kafka-topics.sh --version`).
-A copy of its own that does not start is removed and downloaded again.
-
-Nothing needs root: Java 8 is a JDK archive unpacked into
-`~/bigdata_stack/jdk8`, downloads use `curl`, `wget` or `python3` (whatever
-the PC has), and `pip` is installed for the user with `get-pip.py` when
-Ubuntu's python3 comes without it.
+Nothing else needs root: a missing Java 8 is a JDK archive unpacked into
+`~/bigdata_stack/jdk8`, downloads use `curl`, `wget` or `python3`, and `pip`
+is installed for the user with `get-pip.py` when python3 comes without it.
 
 ## Other repairs
 
 | Problem | Repair |
 |---|---|
-| `hadoop-env.sh` has no `JAVA_HOME`, or one that points to a removed JDK | Rewrites that line (backup kept) |
-| The runner's Hadoop has no configuration, or a hand-edited one | Writes a pseudo-distributed `core-site.xml`/`hdfs-site.xml` (backups kept) |
 | SSH to localhost not possible | Starts the daemons with `hdfs --daemon start`. It never installs an SSH server |
 | Lab window closed while HDFS runs | Daemons run in their own session (`setsid`), so closing the window does not stop them |
 | NameNode never formatted | Formats once |
@@ -658,7 +705,7 @@ Ubuntu's python3 comes without it.
 | YARN down or the job hangs | Runs the job again in local MapReduce mode |
 | Output dir or HDFS file already exists | Deletes it and runs the command again |
 | Pig cannot start with Hadoop 3 on `PATH` | Runs again with Pig's bundled Hadoop libraries |
-| Hive guava conflict with Hadoop 3 | Swaps the guava jar (backup kept) |
+| Hive guava conflict with Hadoop 3 | Swaps the guava jar in a Hive folder that is writable (backup kept). A read-only Hive with that conflict is not chosen by Setup |
 | Hive local job `OutOfMemoryError` | Larger heap, small sort buffer, retry |
 | Hive metastore unusable or locked | `schematool -info` check; removes and re-creates it; removes a stale Derby lock |
 | Kafka broker killed, ZooKeeper still holds its registration | Waits for the old session to expire, starts the broker again (up to 3 times) |
@@ -699,14 +746,13 @@ Outside this folder the runner writes only to `~/bigdata_stack` (tools),
 ## Configuration switches (`config/environment.conf`)
 
 ```
-REUSE_INSTALLED=0         # 1 = also use copies found elsewhere on the PC
+REUSE_INSTALLED=1         # 0 = never use the copies on the PC, always download own ones
 CFG_JAVA_HOME / CFG_HADOOP_HOME / CFG_PIG_HOME / CFG_HIVE_HOME / CFG_SPARK_HOME / CFG_KAFKA_HOME
 STACK_DIR="$HOME/bigdata_stack"   # where Setup puts the runner's own tools
 HADOOP_VER PIG_VER HIVE_VER SPARK_VER KAFKA_INSTALL_VER   # versions Setup installs
 AUTO_SETUP=1              # 0 = only the S menu entry installs software
 AUTO_START_SERVICES=1     # 0 = never start HDFS/YARN/Kafka
 AUTO_INSTALL_PY=1         # 0 = never pip install
-AUTO_WRITE_HADOOP_CONF=1  # 0 = never write core-site/hdfs-site
 SERVICE_TIMEOUT=90        # seconds to wait for a service
 MAX_FIX_ATTEMPTS=2        # fix-and-retry rounds per command
 KAFKA_PORT=9092
@@ -717,35 +763,39 @@ LAB_RAW_OUTPUT=1          # 0 = lab window also shows [CHECK]/[STEP]/[FIX] lines
 
 ## Known limits
 
-- Daemons of **another Linux user** cannot be stopped without a password.
-  The lab then stops with a message that says so. Restarting the PC clears it.
-- Another program (not Hadoop or Kafka) on port 9000, 9092 or 2181 is
-  reported, not stopped.
-- The first run needs internet and about 2 GB of downloads. The Apache
-  archive server is sometimes slow (5 to 30 minutes).
+- A tool that is missing or broken needs internet once. The Apache archive
+  server is sometimes slow (all five tools: 5 to 30 minutes).
+- Another program (not Hadoop, Kafka or ZooKeeper) on port 9000, 9092 or
+  2181 is reported, not stopped.
+- Lab 9's program has the folder `/tmp/retail_stream_input` written in it.
+  If another user ran Lab 9 on the same PC, that folder belongs to them.
 - Pig 0.17 has no MapReduce mode for Hadoop 3, so Lab 5 runs `pig -x local`.
-- Single machine only. Tested on Ubuntu 24.04 (x86_64). Spark 3.5 supports
-  Python up to 3.12 officially; it also passed here with 3.13.
+- Single machine only.
 
 ## Tested
 
-Ubuntu 24.04, no systemd, no SSH server, as root.
+Ubuntu 24.04 (x86_64), no systemd, no SSH server.
 
-- **Clean PC** (only Java 21 and Python): `./lab-runner all` installs
-  everything and all 11 entries pass. Also in separate xterm and
-  gnome-terminal windows; HDFS and Kafka keep running when a window closes.
-- **Broken PC**: a shell with wrong `JAVA_HOME`, `HADOOP_HOME`,
-  `HADOOP_CONF_DIR`, `CLASSPATH`, `HIVE_HOME`, `SPARK_HOME`, `PIG_HOME`,
-  `KAFKA_HOME`; fake `hadoop`, `hive`, `pig`, `java` commands first in
-  `PATH` that only print an error; a second Hadoop (NameNode + DataNode) and
-  a second Kafka + ZooKeeper running on the same ports; no JDK 8; the
-  runner's own Pig and Kafka copies damaged; its HDFS data and Hive
-  metastore damaged. Setup and the labs repaired all of it and passed.
-- Forced failures: no internet during Setup, a window closed in the middle
-  of a lab, a terminal emulator that cannot start, Kafka killed with
-  `kill -9`.
-- Not tested: a PC where another Linux user's daemons hold the ports, ARM
-  processors, Ubuntu versions other than 24.04.
+- **Tools already on the PC, unprivileged user.** Hadoop, Pig, Hive, Spark,
+  Kafka and Java 8 installed system-wide and owned by root (`/opt`,
+  `/usr/local`, `/usr/lib/jvm`), with wrong settings inside them (a
+  `core-site.xml` for another host, `hadoop-env.sh` with a missing Java, a
+  MySQL `hive-site.xml`, a cluster `spark-defaults.conf`), `/tmp/hadoop`
+  owned by root, and a shell whose `HADOOP_HOME` points to an unusable Hadoop
+  2.7.3. A user without any administrator rights ran `./lab-runner all`:
+  Setup took 18 seconds, downloaded nothing, and all 11 entries passed.
+- **Nothing on the PC** (only Java 21 and Python): everything is downloaded,
+  all 11 entries pass. Also in separate xterm and gnome-terminal windows.
+- **Damaged state**: the runner's own copies, HDFS data, Hive metastore and
+  Kafka data damaged; a second Hadoop and Kafka running on the same ports.
+  All repaired.
+- **Daemons of another user**: HDFS started by root on another port. The lab
+  asked for the password. With a refused password it stopped with a clear
+  message. The accepted case was tested with a stand-in for `sudo`, because
+  the test account could not be given real `sudo` rights.
+- Not tested: a real `sudo` password typed in a real terminal, ARM
+  processors, other Ubuntu versions, tool versions other than the ones above
+  (for example an existing Hadoop 3.4 or Hive 2.3).
 
 ## License
 

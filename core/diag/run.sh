@@ -50,12 +50,7 @@ lab_main() {
     if [ -n "$p" ] && [ "$(readlink -f "$p")" != "$(readlink -f "$h/bin/hadoop")" ]; then _d_bad "hadoop on PATH is a different copy: $p"; fi
     _d_item "hadoop executable ($(hadoop_version 2>/dev/null))" "[ -x '$h/bin/hadoop' ]"
     _d_item "hdfs executable" "[ -x '$h/bin/hdfs' ]"
-    _d_item "hadoop-env.sh present" "[ -f '$h/etc/hadoop/hadoop-env.sh' ]"
-    if [ -x "$h/bin/hdfs" ] && [ -n "${JAVA_HOME:-}" ] || [ -x "$h/bin/hdfs" ]; then
-      v=$(hconf fs.defaultFS)
-      if [ -n "$v" ] && [ "$v" != "file:///" ]; then _d_ok "fs.defaultFS = $v"; else _d_bad "fs.defaultFS not set (local filesystem mode)"; fi
-      v=$(hconf mapreduce.framework.name); _d_ok "mapreduce.framework.name = ${v:-local (default)}"
-    fi
+    info "The labs use their own Hadoop configuration (state/hadoop-conf, hdfs://localhost:9000)"
     _d_item "hadoop-common jar" "ls '$h'/share/hadoop/common/hadoop-common-*.jar"
     _d_item "MapReduce libraries" "ls '$h'/share/hadoop/mapreduce/hadoop-mapreduce-client-core-*.jar"
     echo; echo "${C_BOLD}HDFS / YARN PROCESSES${C_RESET}"

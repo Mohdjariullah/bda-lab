@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# core/detect.sh - find installations, pick ONE copy, set the environment.
+# core/detect.sh - choose ONE installation of every tool and set the environment.
 #
-# Default (REUSE_INSTALLED=0): only two places count.
-#   1. CFG_<TOOL>_HOME from config/environment.conf
-#   2. the runner's own copy in $STACK_DIR (installed by Setup, versions that
-#      are tested together)
-# Other copies on the PC (in /opt, /usr/local, ~/hadoop ...) are ignored, so a
-# wrong version or a broken configuration there cannot break a lab.
+# A tool is used from (first valid one wins):
+#   1. CFG_<TOOL>_HOME from config/environment.conf (forced by hand)
+#   2. the runner's own copy in $STACK_DIR, when Setup had to download one
+#   3. DETECTED_<TOOL>_HOME in state/detected.env: a copy that was already on
+#      this PC and that Setup has STARTED AND TESTED
 #
-# With REUSE_INSTALLED=1 the search continues (first valid one wins):
-#   2. DETECTED_<TOOL>_HOME cached in state/detected.env (a choice made earlier)
-#   3. <TOOL>_HOME inherited from the shell, if it points to a real install
-#   4. the executable found on PATH
-#   5. a filesystem search; with several copies the highest version wins
+# Finding and testing the copies that are already on the PC is Setup's job
+# (core/setup/run.sh). It looks where the shell says the tool is (HADOOP_HOME,
+# JAVA_HOME ...), then at the command on PATH, then searches the disk. Only a
+# copy that really starts and has a usable version is taken; if there is none,
+# Setup downloads the runner's own copy. With REUSE_INSTALLED=0 Setup skips
+# the copies on the PC and always uses its own.
 #
-# Tools are always executed through their chosen home (absolute path), so a
-# wrong copy earlier in PATH cannot interfere.
+# Tools are always executed through their chosen home, with the runner's own
+# configuration directories, so the settings of the PC cannot interfere.
 
 _tool_spec() {   # sets T_VAR T_BIN T_PROBE for a tool name
   case "$1" in
@@ -78,22 +78,54 @@ locate_home() {
   local name=$1
   LOCATED_HOME=""; LOCATE_SOURCE=""; LOCATE_CANDIDATES=""
   _tool_spec "$name" || return 1
-  local cfgvar="CFG_$T_VAR" cachevar="DETECTED_$T_VAR" cur="${!T_VAR:-}"
+  local cfgvar="CFG_$T_VAR" cachevar="DETECTED_$T_VAR"
   if _valid_home "${!cfgvar:-}" "$T_BIN";   then LOCATE_SOURCE=config; LOCATED_HOME=${!cfgvar};   return 0; fi
   local own; own=$(stack_home "$name")
   if _valid_home "$own" "$T_BIN";           then LOCATE_SOURCE="own copy"; LOCATED_HOME=$own;     return 0; fi
-  [ "${REUSE_INSTALLED:-0}" = 1 ] || return 1
-  if _valid_home "${!cachevar:-}" "$T_BIN"; then LOCATE_SOURCE=cache;  LOCATED_HOME=${!cachevar}; return 0; fi
-  if _valid_home "$cur" "$T_BIN";           then LOCATE_SOURCE=env;    LOCATED_HOME=$cur;         return 0; fi
-  local p h
-  p=$(command -v "$(basename "$T_BIN")" 2>/dev/null)
-  if [ -n "$p" ]; then
-    h=$(_home_of_bin "$p")
-    if _valid_home "$h" "$T_BIN"; then LOCATE_SOURCE=path; LOCATED_HOME=$h; return 0; fi
-  fi
-  LOCATE_CANDIDATES=$(find_installs "$T_BIN") || return 1
-  LOCATE_SOURCE=search
-  LOCATED_HOME=$(printf '%s\n' "$LOCATE_CANDIDATES" | head -n1)
+  if _valid_home "${!cachevar:-}" "$T_BIN"; then LOCATE_SOURCE="already on this PC, tested"; LOCATED_HOME=${!cachevar}; return 0; fi
+  return 1
+}
+
+# candidate_homes NAME : "HOME<TAB>WHERE IT WAS FOUND" for every copy of the tool
+# on this PC, best guess first: the shell variable, the command on PATH, a disk search.
+candidate_homes() {
+  local name=$1 hint p h own
+  _tool_spec "$name" || return 1
+  own=$(readlink -f "$(stack_home "$name")" 2>/dev/null)
+  {
+    hint="HINT_$T_VAR"; hint=${!hint:-}
+    [ -n "$hint" ] && printf '%s\t%s\n' "$hint" "$T_VAR in your shell"
+    p=$(command -v "$(basename "$T_BIN")" 2>/dev/null)
+    [ -n "$p" ] && printf '%s\t%s\n' "$(_home_of_bin "$p")" "$(basename "$T_BIN") on PATH"
+    find_installs "$T_BIN" 2>/dev/null | while IFS= read -r h; do printf '%s\t%s\n' "$h" "found on disk"; done
+  } | while IFS=$'\t' read -r h p; do
+        h=$(readlink -f "$h" 2>/dev/null)
+        [ -n "$h" ] && [ "$h" != "$own" ] && printf '%s\t%s\n' "$h" "$p"
+      done | awk -F'\t' '!seen[$1]++'
+}
+
+# prepare_tool_conf NAME : point the tool at the runner's private configuration
+prepare_tool_conf() {
+  case "$1" in
+    hadoop) build_hadoop_conf ;;
+    hive)
+      # Hive reads $HIVE_HOME/conf/hive-site.xml when the private directory has none,
+      # so the private one states the lab's settings: embedded Derby in the work directory
+      mkdir -p "$STATE_DIR/hive-conf"
+      _xml "$STATE_DIR/hive-conf/hive-site.xml" \
+        "javax.jdo.option.ConnectionURL=jdbc:derby:;databaseName=metastore_db;create=true" \
+        "javax.jdo.option.ConnectionDriverName=org.apache.derby.jdbc.EmbeddedDriver" \
+        "hive.metastore.uris=" \
+        "hive.metastore.warehouse.dir=/user/hive/warehouse" \
+        "hive.exec.local.scratchdir=$LAB_WORKDIR_BASE/hive-scratch" \
+        "hive.querylog.location=$LAB_WORKDIR_BASE/hive-scratch"
+      export HIVE_CONF_DIR="$STATE_DIR/hive-conf" ;;
+    spark)
+      mkdir -p "$STATE_DIR/spark-conf"; export SPARK_CONF_DIR="$STATE_DIR/spark-conf" ;;
+    kafka)
+      # kafka-run-class.sh writes logs into the installation folder by default (read-only when root-owned)
+      mkdir -p "$LAB_WORKDIR_BASE/kafka-data/logs"; export LOG_DIR="$LAB_WORKDIR_BASE/kafka-data/logs" ;;
+  esac
 }
 
 # ensure_tool NAME : resolve the installation, export <TOOL>_HOME + PATH, then
@@ -118,8 +150,17 @@ ensure_tool() {
   path_prepend "$home/bin"
   [ -d "$home/sbin" ] && path_prepend "$home/sbin"
   save_detected "DETECTED_$T_VAR" "$home"
+  # the runner's private configuration must be in place BEFORE the tool is
+  # started: the PC's own files (hadoop-env.sh with an old JAVA_HOME, a
+  # hive-site.xml for MySQL, a cluster spark-defaults.conf) would break it
+  prepare_tool_conf "$name"
   if [ -n "$T_PROBE" ]; then
-    run "$binname" $T_PROBE || { note_fail "$name does not start ($home). Type S in the menu (Setup): it replaces a damaged copy."; return 1; }
+    if ! run "$binname" $T_PROBE; then
+      # forget this copy: the launcher then runs Setup, which tests every copy again
+      [ "$LOCATE_SOURCE" = config ] || save_detected "DETECTED_$T_VAR" ""
+      note_fail "$name does not start ($home)"
+      return 1
+    fi
   fi
   note_ok "$name: $home  ($LOCATE_SOURCE)"
 }
@@ -139,10 +180,15 @@ list_javas() {
   {
     echo "$(stack_home java)"
     [ -n "${CFG_JAVA_HOME:-}" ] && echo "$CFG_JAVA_HOME"
-    ls -d /usr/lib/jvm/*/ 2>/dev/null | sed 's:/$::'
-    if [ "${REUSE_INSTALLED:-0}" = 1 ]; then
-      find_bins '*/bin/javac' | while IFS= read -r f; do _home_of_bin "$f"; done
+    if [ "${REUSE_INSTALLED:-1}" = 1 ]; then
+      [ -n "${DETECTED_JAVA_HOME:-}" ] && echo "$DETECTED_JAVA_HOME"
+      [ -n "${HINT_JAVA_HOME:-}" ] && echo "$HINT_JAVA_HOME"
+      ls -d /usr/lib/jvm/*/ 2>/dev/null | sed 's:/$::'
       local p; p=$(command -v javac 2>/dev/null) && _home_of_bin "$p"
+      # the disk search is slow, so only Setup does it (JAVA_SEARCH=1) and remembers the result
+      if [ "${JAVA_SEARCH:-0}" = 1 ]; then
+        find_bins '*/bin/javac' | while IFS= read -r f; do _home_of_bin "$f"; done
+      fi
     fi
   } | while IFS= read -r h; do
         h=$(readlink -f "$h" 2>/dev/null)
@@ -265,7 +311,6 @@ scan_environment() {
       export "$T_VAR=$h"
     fi
   done
-  if [ -n "${HADOOP_HOME:-}" ] && grep -qs 'fs.defaultFS' "$HADOOP_HOME/etc/hadoop/core-site.xml"; then
-    ENV_HDFSCONF=1
-  fi
+  # the HDFS configuration is the runner's own (state/hadoop-conf), written when a lab needs it
+  ENV_HDFSCONF=$ENV_HADOOP
 }

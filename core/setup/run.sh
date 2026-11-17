@@ -1,21 +1,20 @@
 #!/usr/bin/env bash
-# core/setup/run.sh - one-click installer for the lab software.
+# core/setup/run.sh - makes sure every tool the labs need is there AND works.
 # Runs through core/labshell.sh like a lab (id "setup"), so it gets the same
 # window, progress lines, log file and final banner.
 #
-# Everything goes into $STACK_DIR (default ~/bigdata_stack) and belongs to the
-# current user. Nothing is installed with apt, so no password is ever asked:
-#   Java     JDK 8 (Eclipse Temurin), only when the PC has no working JDK 8
-#   Apache   Hadoop, Pig, Hive, Spark, Kafka
-#   pip      numpy, pandas, matplotlib, seaborn, kafka-python (for this user)
+# For Java 8, Hadoop, Pig, Hive, Spark and Kafka, in this order:
+#   1. A copy that is already on this PC is looked for: where the shell says
+#      it is (HADOOP_HOME, JAVA_HOME ...), the command on PATH, a disk search.
+#   2. Every copy found is checked (usable version) and STARTED once. The first
+#      one that works is used. Nothing is downloaded for that tool.
+#   3. Only when no copy works, the runner downloads its own into $STACK_DIR
+#      (default ~/bigdata_stack). No password is needed for that.
+# A copy of the runner's own that stops working is removed and installed again.
+# Copies on the PC are never changed and never deleted.
 #
-# Each tool is tested after it is installed AND when it is already there. A
-# copy that does not start is removed and installed again. Other copies of
-# these tools elsewhere on the PC are never touched and never used.
-#
-# Versions are set in core/common.sh and can be changed in config/environment.conf.
-
-: "${SETUP_MIN_FREE_GB:=5}"
+# Then the Python packages for labs 1, 2 and 10 are installed for this user.
+# REUSE_INSTALLED=0 skips steps 1 and 2 (always the runner's own copies).
 
 # ---- downloads (curl, wget or python3: whatever this PC has) ----------------
 _url_ok() {   # does the URL exist?
@@ -99,8 +98,8 @@ _unpack() {
 }
 
 # ---- Java 8 ----------------------------------------------------------------
-_jdk_majors() { list_javas | cut -f1 | sort -un | tr '\n' ' '; }
-_have_jdk()   { list_javas | cut -f1 | grep -qx "$1"; }
+_jdk_majors() { JAVA_SEARCH=1 list_javas | cut -f1 | sort -un | tr '\n' ' '; }
+_jdk8_home()  { JAVA_SEARCH=1 list_javas | awk -F'\t' '$1==8 {print $2; exit}'; }
 
 _install_jdk8() {
   local arch dest file="$STACK_DIR/.downloads/jdk8.tar.gz"
@@ -133,7 +132,41 @@ _tool_rel() {   # path of the archive on the Apache servers
 }
 _tool_mb() { case "$1" in hadoop) echo 730;; pig) echo 230;; hive) echo 330;; spark) echo 400;; kafka) echo 115;; esac; }
 
+# _tool_version NAME HOME : version read from the jar names (works without starting the tool)
+_tool_version() {
+  local f
+  case "$1" in
+    hadoop) f=$(ls "$2"/share/hadoop/common/hadoop-common-[0-9]*.jar 2>/dev/null | grep -v tests | head -n1) ;;
+    pig)    f=$(ls "$2"/pig-[0-9]*.jar 2>/dev/null | head -n1) ;;
+    hive)   f=$(ls "$2"/lib/hive-exec-[0-9]*.jar 2>/dev/null | head -n1) ;;
+    spark)  f=$(ls "$2"/jars/spark-core_*.jar 2>/dev/null | head -n1) ;;
+    kafka)  f=$(ls "$2"/libs/kafka_*.jar 2>/dev/null | grep -vE 'sources|javadoc|test' | head -n1) ;;
+  esac
+  basename "${f:-x}" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | tail -n1
+}
+
+# _tool_unusable NAME HOME : prints the reason and returns 0 when this copy cannot
+# run the labs (the lab programs are written for these version ranges)
+_tool_unusable() {
+  local name=$1 home=$2 v; v=$(_tool_version "$name" "$home"); v=${v:-0}
+  case "$name" in
+    hadoop) version_ge "$v" 3.0.0 && ! version_ge "$v" 4.0.0 || { echo "version $v, the labs need Hadoop 3.x"; return 0; } ;;
+    pig)    version_ge "$v" 0.16.0 || { echo "version $v, the labs need Pig 0.16 or newer"; return 0; } ;;
+    hive)   version_ge "$v" 2.3.0 && ! version_ge "$v" 4.0.0 || { echo "version $v, the labs need Hive 2.3 to 3.x"; return 0; }
+            # Hive 2/3 ships Guava 19, Hadoop 3 needs 27+: the jar must be swapped, which needs write access
+            if ls "$home"/lib/guava-19*.jar >/dev/null 2>&1 && [ ! -w "$home/lib" ]; then
+              echo "its Guava jar conflicts with Hadoop 3 and the folder is read-only"; return 0
+            fi ;;
+    spark)  version_ge "$v" 3.0.0 && ! version_ge "$v" 4.0.0 || { echo "version $v, the labs need Spark 3.x"; return 0; } ;;
+    kafka)  version_ge "$v" 2.0.0 && ! version_ge "$v" 4.0.0 || { echo "version $v, the labs need Kafka 2.x or 3.x"; return 0; }
+            [ -f "$home/config/zookeeper.properties" ] || { echo "it has no ZooKeeper configuration"; return 0; } ;;
+  esac
+  return 1
+}
+
 # _tool_works NAME HOME : does this copy really start? (output goes to the log only)
+# It is started the way the labs start it: the chosen Java and Hadoop first in
+# PATH and the runner's private configuration directories.
 _tool_works() {
   local name=$1 home=$2 cmd
   case "$name" in
@@ -144,16 +177,23 @@ _tool_works() {
     kafka)  cmd=("$home/bin/kafka-topics.sh" --version) ;;
   esac
   _logline "$ ${cmd[*]}"
-  # the runner's Java and Hadoop go first in PATH: Pig and Hive call plain "hadoop",
-  # and a broken copy earlier in PATH would make a good tool look broken
-  ( export JAVA_HOME="$SETUP_JAVA_HOME" PATH="$SETUP_JAVA_HOME/bin:$(stack_home hadoop)/bin:$PATH"
-    [ "$name" = hadoop ] || export HADOOP_HOME="$(stack_home hadoop)"
-    timeout 180 "${cmd[@]}" ) >> "${LAB_LOG:-/dev/null}" 2>&1
+  ( export JAVA_HOME="$SETUP_JAVA_HOME"
+    if [ "$name" = hadoop ]; then export HADOOP_HOME="$home"; else export HADOOP_HOME="$SETUP_HADOOP_HOME"; fi
+    export PATH="$JAVA_HOME/bin:$HADOOP_HOME/bin:$PATH"
+    [ -x "$HADOOP_HOME/bin/hadoop" ] && prepare_tool_conf hadoop >/dev/null
+    [ "$name" = hadoop ] || prepare_tool_conf "$name"
+    cd "$STATE_DIR" && timeout 180 "${cmd[@]}" </dev/null ) >> "${LAB_LOG:-/dev/null}" 2>&1
 }
 
 _install_tool() {
-  local name=$1 rel dest file rc
+  local name=$1 rel dest file rc free_kb
   rel=$(_tool_rel "$name"); dest=$(stack_home "$name")
+  mkdir -p "$STACK_DIR"
+  free_kb=$(df -Pk "$STACK_DIR" | awk 'NR==2 {print $4}')
+  if [ "${free_kb:-0}" -lt $(( $(_tool_mb "$name") * 1024 * 4 )) ]; then
+    note_fail "$name: not enough disk space in $STACK_DIR ($((free_kb / 1024)) MB free). Delete some files and run Setup again."
+    return 1
+  fi
   file="$STACK_DIR/.downloads/$(basename "$rel")"
   mkdir -p "$STACK_DIR/.downloads"
   note_info "$name: downloading (about $(_tool_mb "$name") MB)"
@@ -172,36 +212,60 @@ _install_tool() {
 
 # _setup_tool NAME : make sure a working copy exists. Returns 1 if that is not possible.
 _setup_tool() {
-  local name=$1 home own
+  local name=$1 home own why cand where v
   own=$(stack_home "$name")
+  _tool_spec "$name"
   check "$name"
+
+  # 1. the copy chosen earlier (forced in the config, the runner's own, or tested before)
   locate_home "$name"; home=$LOCATED_HOME
   if [ -n "$home" ]; then
-    # cheap repair first: a JAVA_HOME line in hadoop-env.sh that points to a JDK
-    # which was removed since (the most common reason Hadoop stops starting)
-    if [ "$name" = hadoop ] && [ -n "$SETUP_JAVA_HOME" ]; then
-      ( HADOOP_HOME=$home; JAVA_HOME=$SETUP_JAVA_HOME; unset HADOOP_CONF_DIR; fix_hadoop_env_java )
-    fi
     if [ -z "$SETUP_JAVA_HOME" ] || _tool_works "$name" "$home"; then
-      ok "$name works: $home"
+      note_ok "$name works: $home  ($LOCATE_SOURCE, version $(_tool_version "$name" "$home"))"
       return 0
     fi
-    fail "$name is installed in $home but does not start"
-    if [ "$home" = "$own" ]; then
-      note_fix "$name: removing the damaged copy and installing it again"
-    else
-      note_fix "$name: installing the runner's own copy in $own and using that one"
+    fail "$name in $home does not start any more"
+    if [ "$LOCATE_SOURCE" = config ]; then
+      note_fail "$name: CFG_$T_VAR in config/environment.conf points to a copy that does not start"
+      return 1
     fi
+    save_detected "DETECTED_$T_VAR" ""
+    [ "$home" = "$own" ] && { note_fix "$name: removing the runner's damaged copy"; wipe_dir "$own"; }
   elif [ -e "$own" ]; then
-    note_fix "$name: the copy in $own is incomplete, removing it and installing it again"
+    note_fix "$name: the runner's copy in $own is incomplete, removing it"
+    wipe_dir "$own"
   fi
-  rm -rf "${own:?}"
+
+  # 2. copies that are already on this PC: test each one, use the first that works
+  if [ "${REUSE_INSTALLED:-1}" = 1 ]; then
+    while IFS=$'\t' read -r cand where; do
+      [ -n "$cand" ] || continue
+      if ! _valid_home "$cand" "$T_BIN"; then
+        info "$name: $cand ($where) is not a complete installation, not used"
+        continue
+      fi
+      v=$(_tool_version "$name" "$cand")
+      if why=$(_tool_unusable "$name" "$cand"); then
+        info "$name: $cand ($where) cannot be used: $why"
+        continue
+      fi
+      if [ -n "$SETUP_JAVA_HOME" ] && _tool_works "$name" "$cand"; then
+        save_detected "DETECTED_$T_VAR" "$cand"
+        note_ok "$name: the copy already on this PC works and is used: $cand  ($where, version $v). Nothing to download."
+        return 0
+      fi
+      info "$name: $cand ($where) does not start, not used"
+    done < <(candidate_homes "$name")
+    info "$name: no working copy on this PC"
+  fi
+
+  # 3. download the runner's own copy
   _install_tool "$name" || return 1
   if [ -n "$SETUP_JAVA_HOME" ] && ! _tool_works "$name" "$own"; then
-    note_fail "$name was installed but does not start. The reason is at the end of the log."
+    note_fail "$name was downloaded but does not start. The reason is at the end of the log."
     return 1
   fi
-  _tool_spec "$name"; save_detected "DETECTED_$T_VAR" "$own"
+  save_detected "DETECTED_$T_VAR" "$own"
   note_ok "$name installed: $own"
 }
 
@@ -210,11 +274,11 @@ _setup_summary() {
   local t bad=0
   echo; echo "$LINE2"; echo " SETUP SUMMARY"; echo "$LINE2"
   _logline ""; _logline " SETUP SUMMARY"
-  if [ -n "$SETUP_JAVA_HOME" ]; then note_ok "Java      $SETUP_JAVA_HOME"; else note_fail "Java      no working JDK 8 (needed by labs 3 to 10)"; bad=1; fi
+  if [ -n "$SETUP_JAVA_HOME" ]; then note_ok "Java 8    $SETUP_JAVA_HOME"; else note_fail "Java      no working JDK 8 (needed by labs 3 to 10)"; bad=1; fi
   if have python3; then note_ok "Python    $(python3 --version 2>&1 | awk '{print $2}')"; else note_fail "Python    python3 not found (labs 1, 2, 8, 9, 10)"; bad=1; fi
   for t in hadoop pig hive spark kafka; do
     locate_home "$t"
-    if [ -n "$LOCATED_HOME" ] && [ "${SETUP_BAD[$t]:-0}" = 0 ]; then note_ok "$(printf '%-9s' "$t") $LOCATED_HOME"
+    if [ -n "$LOCATED_HOME" ] && [ "${SETUP_BAD[$t]:-0}" = 0 ]; then note_ok "$(printf '%-9s' "$t") $LOCATED_HOME  ($LOCATE_SOURCE)"
     else note_fail "$(printf '%-9s' "$t") not working"; bad=1; fi
   done
   return $bad
@@ -225,39 +289,27 @@ lab_main() {
   local t failed=0
   declare -gA SETUP_BAD=()
   SETUP_JAVA_HOME=""
-  mkdir -p "$STACK_DIR" || die "Cannot create $STACK_DIR"
 
-  step 1 "Disk space and internet"
-  local free_kb need_kb=$((SETUP_MIN_FREE_GB * 1024 * 1024)) need_dl=0
-  for t in hadoop pig hive spark kafka; do locate_home "$t"; [ -n "$LOCATED_HOME" ] || need_dl=1; done
-  free_kb=$(df -Pk "$STACK_DIR" | awk 'NR==2 {print $4}')
-  if [ "$need_dl" = 1 ] && [ "${free_kb:-0}" -lt "$need_kb" ]; then
-    die "Not enough disk space in $STACK_DIR: $((free_kb / 1048576)) GB free, $SETUP_MIN_FREE_GB GB needed. Delete some files and run Setup again."
-  fi
-  ok "Disk space: $((free_kb / 1048576)) GB free in $STACK_DIR"
-  if _url_ok https://archive.apache.org/dist/ 2>/dev/null || _url_ok https://dlcdn.apache.org/ 2>/dev/null; then
-    ok "Internet: the Apache download servers answer"
-  else
-    note_warn "No internet connection (the Apache download servers do not answer). Only what is already installed can be checked."
-  fi
-
-  step 2 "Java 8"
-  if _have_jdk 8; then
-    ok "A working JDK 8 is already on this PC"
+  step 1 "Java 8"
+  SETUP_JAVA_HOME=$(_jdk8_home)
+  if [ -n "$SETUP_JAVA_HOME" ]; then
+    note_ok "Java 8 is already on this PC and works: $SETUP_JAVA_HOME. Nothing to download."
   else
     info "No working JDK 8 on this PC (found: $(_jdk_majors))"
     _install_jdk8 || failed=1
+    SETUP_JAVA_HOME=$(_jdk8_home)
   fi
-  SETUP_JAVA_HOME=$(list_javas | awk -F'\t' '$1==8 {print $2; exit}')
   [ -n "$SETUP_JAVA_HOME" ] && save_detected DETECTED_JAVA_HOME "$SETUP_JAVA_HOME"
 
-  step 3 "Hadoop, Pig, Hive, Spark, Kafka"
+  step 2 "Hadoop, Pig, Hive, Spark, Kafka"
+  SETUP_HADOOP_HOME=""
   for t in hadoop pig hive spark kafka; do
     _setup_tool "$t" || { SETUP_BAD[$t]=1; failed=1; }
+    if [ "$t" = hadoop ]; then locate_home hadoop; SETUP_HADOOP_HOME=$LOCATED_HOME; fi
   done
   rm -rf "$STACK_DIR/.downloads" 2>/dev/null
 
-  step 4 "Python packages for labs 1, 2 and 10"
+  step 3 "Python packages for labs 1, 2 and 10"
   if ensure_python; then
     ensure_pymods numpy pandas matplotlib seaborn \
       || { note_fail "Some Python packages for labs 1 and 2 could not be installed"; failed=1; }

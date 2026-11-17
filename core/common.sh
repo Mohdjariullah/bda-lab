@@ -37,7 +37,7 @@ chmod 700 "$STATE_DIR" 2>/dev/null || true
 : "${KAFKA_PORT:=9092}"
 : "${AUTO_SETUP:=1}"
 : "${STACK_DIR:=$HOME/bigdata_stack}"
-: "${REUSE_INSTALLED:=0}"
+: "${REUSE_INSTALLED:=1}"
 # versions of the runner's own copies (tested together)
 : "${HADOOP_VER:=3.3.6}"
 : "${PIG_VER:=0.17.0}"
@@ -52,6 +52,12 @@ chmod 700 "$STATE_DIR" 2>/dev/null || true
 # such settings, and they are the cause of "version mismatch" and "environment
 # not configured" errors. The runner sets every variable itself, per lab.
 sanitize_env() {
+  # remember where the shell says the tools are: Setup tests those places first
+  local v h
+  for v in JAVA_HOME HADOOP_HOME PIG_HOME HIVE_HOME SPARK_HOME KAFKA_HOME; do
+    h="HINT_$v"
+    [ -n "${!h+x}" ] || export "$h=${!v:-}"
+  done
   unset HADOOP_HOME HADOOP_PREFIX HADOOP_INSTALL HADOOP_CONF_DIR HADOOP_CLASSPATH HADOOP_OPTS \
         HADOOP_COMMON_HOME HADOOP_HDFS_HOME HADOOP_MAPRED_HOME HADOOP_YARN_HOME YARN_HOME YARN_CONF_DIR \
         HADOOP_LOG_DIR HADOOP_PID_DIR HADOOP_USER_NAME HADOOP_HEAPSIZE HADOOP_HEAPSIZE_MAX \
@@ -82,7 +88,7 @@ lab_title_for() {
     09)  echo "Lab 9  - Spark Structured Streaming" ;;
     10)  echo "Lab 10 - Kafka Event Streaming" ;;
     diag) echo "System Diagnostics" ;;
-    setup) echo "Setup - Install All Lab Software" ;;
+    setup) echo "Setup - Test and Install the Lab Software" ;;
     *)   echo "Lab $1" ;;
   esac
 }

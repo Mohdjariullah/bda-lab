@@ -39,6 +39,42 @@ kill_pid() {
   return 0
 }
 
+# stop_pid_any PID WHAT : stop a process that blocks a lab. A process of this
+# user is simply stopped. A process of ANOTHER user needs administrator rights:
+# the password is asked right here in the terminal (plain sudo, nothing stored).
+# Returns 1 when the process is still running afterwards.
+stop_pid_any() {
+  local pid=$1 what=$2 owner
+  owner=$(ps -o user= -p "$pid" 2>/dev/null | tr -d ' ')
+  [ -n "$owner" ] || return 0
+  if [ "$owner" = "$(id -un)" ] || [ "$(id -u)" -eq 0 ]; then
+    note_fix "Stopping it (pid $pid)"
+    kill_pid "$pid"
+  else
+    # asked once: after a refusal the other processes are not tried again
+    [ -z "${SUDO_REFUSED:-}" ] || return 1
+    if ! have sudo; then fail "sudo is not installed on this PC"; SUDO_REFUSED=1; return 1; fi
+    progress "[!] $what belongs to the user '$owner'. Type your password in the lab window to stop it."
+    _logline "[WARN] $what belongs to the user '$owner': asking for the password (sudo)"
+    # plain echo: these lines must be visible in the lab window in every output mode
+    echo
+    echo "${C_BOLD}$what (pid $pid) was started by the user '$owner' and blocks this lab.${C_RESET}"
+    echo "${C_BOLD}Administrator rights are needed to stop it.${C_RESET}"
+    echo "${C_BOLD}Type your Linux password and press ENTER (the letters do not show).${C_RESET}"
+    if sudo -p "[sudo] password for %u: " kill "$pid"; then
+      local i; for i in 1 2 3 4 5 6 7 8; do [ -d "/proc/$pid" ] || break; sleep 0.5; done
+      [ -d "/proc/$pid" ] && sudo kill -9 "$pid" 2>/dev/null
+      sleep 1
+      [ -d "/proc/$pid" ] || note_fix "Stopped (pid $pid)"
+    else
+      SUDO_REFUSED=1
+      fail "The password was not accepted, or this account is not allowed to use sudo"
+    fi
+  fi
+  [ -d "/proc/$pid" ] && return 1
+  return 0
+}
+
 # free_port PORT NAME_PATTERN : if a stale helper of ours holds the port, kill it.
 # Returns 1 if the port is used by something else.
 free_port() {
@@ -120,6 +156,10 @@ ensure_kafka() {
     KAFKA_CFG="$KAFKA_DATA/server.properties"; ZK_CFG="$KAFKA_DATA/zookeeper.properties"
   fi
 
+  # kafka-run-class.sh writes its logs into the installation folder by default,
+  # which fails when that folder belongs to root
+  mkdir -p "$LAB_WORKDIR_BASE/kafka-data/logs"; export LOG_DIR="$LAB_WORKDIR_BASE/kafka-data/logs"
+
   check "Kafka broker on port $KAFKA_PORT"
   local pid cmd
   if port_in_use "$KAFKA_PORT"; then
@@ -127,14 +167,14 @@ ensure_kafka() {
     case "$cmd" in
       *"$KAFKA_HOME/"*) note_ok "Kafka broker already running (pid $pid). Reusing it."; return 0 ;;
     esac
+    if [ -z "$pid" ]; then
+      # a listener of another user hides its process from "lsof"; find it by name
+      pid=$(pgrep -f 'kafka\.Kafka' | head -n1); cmd=$(pid_cmd "$pid")
+    fi
     if [ -n "$pid" ] && echo "$cmd" | grep -qi kafka; then
       fail "A Kafka broker from another installation is running on port $KAFKA_PORT (pid $pid)"
-      note_fix "Stopping it so the lab's own broker can start"
-      kill_pid "$pid"; sleep 2
-      port_in_use "$KAFKA_PORT" && die "Port $KAFKA_PORT is held by a Kafka broker of another user. Restart the PC, or ask that user to stop it."
-    elif [ -z "$pid" ]; then
-      note_ok "A Kafka broker is already listening on port $KAFKA_PORT. Reusing it."
-      return 0
+      stop_pid_any "$pid" "This Kafka broker"; sleep 2
+      port_in_use "$KAFKA_PORT" && die "Port $KAFKA_PORT is still held by a Kafka broker of another user. Restart the PC and run the lab again."
     else
       die "Port $KAFKA_PORT is used by another program: $cmd"
     fi
@@ -149,13 +189,12 @@ ensure_kafka() {
       case "$cmd" in
         *"$KAFKA_HOME/"*) ok "ZooKeeper already running" ;;
         *)
-          if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+          [ -n "$pid" ] || pid=$(pgrep -f 'QuorumPeerMain' | head -n1)
+          if [ -n "$pid" ]; then
             fail "A ZooKeeper from another installation is running on port 2181 (pid $pid)"
-            note_fix "Stopping it so the lab's own ZooKeeper can start"
-            kill_pid "$pid"; sleep 2
-          else
-            warn "Port 2181 is in use by a ZooKeeper this user cannot stop. Using it."
-          fi ;;
+            stop_pid_any "$pid" "This ZooKeeper"; sleep 2
+          fi
+          port_in_use 2181 && warn "Port 2181 is still in use. The broker will try to use that ZooKeeper." ;;
       esac
     fi
     port_in_use 2181 || _zookeeper_start || die "ZooKeeper did not start. See $LAB_WORK/zookeeper.log"

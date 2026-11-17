@@ -31,6 +31,9 @@ ensure_spark() {
     note_fix "Using the pip PySpark distribution as SPARK_HOME=$SPARK_HOME"
   fi
   export SPARK_HOME
+  # an empty private configuration directory: spark-defaults.conf / spark-env.sh of the
+  # PC (a YARN or cluster master, another Python) must not change how the lab runs
+  mkdir -p "$STATE_DIR/spark-conf"; export SPARK_CONF_DIR="$STATE_DIR/spark-conf"
   SPARK_SUBMIT="$SPARK_HOME/bin/spark-submit"
   SPARK_VER=$(spark_version); info "Spark version: $SPARK_VER"
   # Spark 4 needs Java 17+, Spark 3 works with 8/11/17

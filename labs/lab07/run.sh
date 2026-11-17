@@ -20,7 +20,7 @@ _hive_guava_fix() {
 # _derby_dir : where the embedded Derby metastore is. Default: metastore_db in
 # the current directory. A hive-site.xml can pin it (databaseName=/some/path).
 _derby_dir() {
-  local site="$HIVE_HOME/conf/hive-site.xml" url=""
+  local site="$HIVE_CONF_DIR/hive-site.xml" url=""
   if [ -f "$site" ]; then
     url=$(tr -d '\n' < "$site" | grep -oE '<name>javax\.jdo\.option\.ConnectionURL</name>[[:space:]]*<value>[^<]*</value>' \
           | sed -E 's#.*<value>([^<]*)</value>.*#\1#')

@@ -53,7 +53,7 @@ show_menu() {
   done
   echo
   echo "    A. Run All Labs"
-  echo "    S. Setup - install missing lab software"
+  echo "    S. Setup - test the tools on this PC, install what is missing"
   echo "    D. System Diagnostics"
   echo "    L. View a lab log"
   echo "    R. Rescan environment"
@@ -149,7 +149,7 @@ $(tail -n 6 "$f" | sed 's/^/        /')}"
 run_all() {
   local id summary="" ans line out="$RESULTS_DIR/last_run_summary.txt" nfail=0 npass=0
   for id in "${LAB_IDS[@]}"; do
-    run_lab "$id"
+    run_lab_healed "$id"
     line=$(printf '  %-8s %-5s %4ss' "$(lab_short_name "$id")" "$LAST_STATUS" "$LAST_SECONDS")
     summary="$summary$line"$'\n'
     if [ "$LAST_STATUS" = OK ]; then
@@ -219,17 +219,36 @@ auto_setup() {
   [ "$(cat "$STATE_DIR/setup.tried" 2>/dev/null)" = "$miss" ] && return 0
   echo
   warn "Not installed yet: $miss"
-  info "Installing it now (about 2 GB, 5 to 30 minutes depending on the internet speed). No password is needed."
+  info "Setup now tests what is already on this PC and downloads only what is missing or does not work."
   echo "$miss" > "$STATE_DIR/setup.tried"
   run_lab setup
-  rescan
+  rescan_quiet
   [ -z "$(missing_software)" ] && rm -f "$STATE_DIR/setup.tried"
   return 0
 }
 run_selection() {   # run_selection "04a 04b"
   local id
-  for id in $1; do run_lab "$id"; done
+  for id in $1; do run_lab_healed "$id"; done
 }
+
+# run_lab_healed ID : run a lab. If it failed because a tool stopped working
+# (the lab then forgets that copy), run Setup, which tests every copy again
+# and installs what is needed, and run the lab once more.
+run_lab_healed() {
+  local before=${ANY_FAILED:-0}
+  run_lab "$1"
+  [ "$LAST_STATUS" = OK ] && return 0
+  [ -f "$STATE_DIR/detected.env" ] && . "$STATE_DIR/detected.env"
+  scan_environment
+  [ -n "$(missing_software)" ] || return 0
+  warn "A tool the lab needs does not work: $(missing_software). Running Setup, then the lab again."
+  run_lab setup
+  [ "$LAST_STATUS" = OK ] || return 0
+  rescan_quiet
+  ANY_FAILED=$before
+  run_lab "$1"
+}
+rescan_quiet() { [ -f "$STATE_DIR/detected.env" ] && . "$STATE_DIR/detected.env"; scan_environment; }
 
 rescan() {
   echo "Scanning the system for installed tools..."
@@ -244,7 +263,7 @@ usage() {
   echo "       ./lab-runner <lab>        run one lab: 1 2 3 4 4a 4b 5 6 7 8 9 10"
   echo "       ./lab-runner all          run every lab in order"
   echo "       ./lab-runner diag         diagnostics report only"
-  echo "       ./lab-runner setup        install the missing lab software"
+  echo "       ./lab-runner setup        test the tools on this PC, install what is missing"
   echo "       ./lab-runner --here <...> run in this window instead of opening a new one"
 }
 if [ -n "${1:-}" ]; then
@@ -272,7 +291,7 @@ while :; do
     0|q|exit) echo "Bye."; exit 0 ;;
     a|all)    run_all ;;
     d|diag)   run_lab diag ;;
-    s|setup)  run_lab setup; rescan ;;
+    s|setup)  run_lab setup; rescan_quiet ;;
     l|log)    view_log; continue ;;
     r|rescan) rescan; continue ;;
     *)

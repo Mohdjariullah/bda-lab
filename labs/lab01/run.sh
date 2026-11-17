@@ -15,8 +15,7 @@ lab_main() {
 
   step 4 "Single-node Hadoop"
   if ensure_tool hadoop; then
-    export HADOOP_CONF_DIR="$(hadoop_conf_dir)"
-    fix_hadoop_env_java
+    build_hadoop_conf
     run_sh "$HADOOP_HOME/bin/hadoop version | head -n 3"
     note_ok "Hadoop found at $HADOOP_HOME"
   else

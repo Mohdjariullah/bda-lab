@@ -1,55 +1,60 @@
 #!/usr/bin/env bash
 # core/hadoop.sh - Hadoop / HDFS / YARN helpers with automatic repair
 
-# hadoop_conf_dir : HADOOP_CONF_DIR when it is a real config dir, else etc/hadoop, else conf (old layout)
-hadoop_conf_dir() {
-  local d="${HADOOP_CONF_DIR:-}"
-  if [ -n "$d" ] && { [ -f "$d/core-site.xml" ] || [ -f "$d/hadoop-env.sh" ]; }; then echo "$d"; return 0; fi
-  for d in "$HADOOP_HOME/etc/hadoop" "$HADOOP_HOME/conf"; do
-    [ -f "$d/hadoop-env.sh" ] || [ -f "$d/core-site.xml" ] && { echo "$d"; return 0; }
-  done
-  echo "$HADOOP_HOME/etc/hadoop"
+# hadoop_conf_dir : the runner's PRIVATE Hadoop configuration directory.
+# The installation's own etc/hadoop is never used and never edited: it may be
+# read-only (root-owned install), point to another host, another data
+# directory or a YARN setup that does not work. That is where "environment not
+# configured" errors come from. The private directory starts as a copy of
+# etc/hadoop and gets the runner's core-site, hdfs-site, mapred-site and env.
+hadoop_conf_dir() { echo "$STATE_DIR/hadoop-conf"; }
+
+# build_hadoop_conf : create or refresh the private configuration
+build_hadoop_conf() {
+  local d src marker home
+  d=$(hadoop_conf_dir); marker="$d/.built-for"
+  home=$(readlink -f "$HADOOP_HOME")
+  HADOOP_RUN_DIR="$LAB_WORKDIR_BASE/hadoop-run"; mkdir -p "$HADOOP_RUN_DIR/logs" "$HADOOP_RUN_DIR/pids"
+  # the data directory of an earlier run that had to move (name dir owned by another user)
+  [ -s "$STATE_DIR/hadoop-data-dir" ] && HADOOP_DATA_DIR=$(cat "$STATE_DIR/hadoop-data-dir")
+  if [ "$(cat "$marker" 2>/dev/null)" != "v2|$home|$JAVA_HOME|$HADOOP_DATA_DIR" ]; then
+    src="$HADOOP_HOME/etc/hadoop"; [ -d "$src" ] || src="$HADOOP_HOME/conf"
+    wipe_dir "$d"; mkdir -p "$d"
+    [ -d "$src" ] && cp -r "$src"/. "$d"/ 2>/dev/null
+    chmod -R u+w "$d" 2>/dev/null
+    rm -f "$d"/yarn-site.xml.bak* 2>/dev/null
+    local data="$HADOOP_DATA_DIR"
+    mkdir -p "$data/tmp" "$data/namenode" "$data/datanode"
+    _xml "$d/core-site.xml" "fs.defaultFS=hdfs://localhost:9000" "hadoop.tmp.dir=$data/tmp"
+    _xml "$d/hdfs-site.xml" "dfs.replication=1" \
+         "dfs.namenode.name.dir=file://$data/namenode" \
+         "dfs.datanode.data.dir=file://$data/datanode" \
+         "dfs.permissions.enabled=false"
+    # staging dir: the default is /tmp/hadoop/mapred/staging, shared by every user of
+    # the PC. If another user ran a job first, it belongs to them and jobs fail (ENOENT).
+    _xml "$d/mapred-site.xml" "mapreduce.framework.name=local" \
+         "mapreduce.jobtracker.staging.root.dir=$data/tmp/mapred/staging"
+    _xml "$d/yarn-site.xml"
+    # hadoop-env.sh: drop every JAVA_HOME / log / pid line of the PC, add the runner's
+    touch "$d/hadoop-env.sh"
+    sed -i -E '/^[[:space:]]*export[[:space:]]+(JAVA_HOME|HADOOP_LOG_DIR|HADOOP_PID_DIR|HADOOP_CONF_DIR|HADOOP_HOME|HADOOP_CLASSPATH|HADOOP_OPTS)=/d' "$d/hadoop-env.sh"
+    {
+      echo "# added by bigdata-lab-runner"
+      echo "export JAVA_HOME=$JAVA_HOME"
+      echo "export HADOOP_LOG_DIR=$HADOOP_RUN_DIR/logs"
+      echo "export HADOOP_PID_DIR=$HADOOP_RUN_DIR/pids"
+    } >> "$d/hadoop-env.sh"
+    printf '%s' "v2|$home|$JAVA_HOME|$HADOOP_DATA_DIR" > "$marker"
+    info "Hadoop configuration for the labs written to $d (the files in $src are not changed)"
+  fi
+  export HADOOP_CONF_DIR="$d" HADOOP_LOG_DIR="$HADOOP_RUN_DIR/logs" HADOOP_PID_DIR="$HADOOP_RUN_DIR/pids"
 }
 hconf() { "$HADOOP_HOME/bin/hdfs" getconf -confKey "$1" 2>/dev/null | tail -n1; }
 _strip_file_uri() { sed -E 's#^file:/*#/#'; }
 hadoop_version() { "$HADOOP_HOME/bin/hadoop" version 2>/dev/null | head -n1 | awk '{print $2}'; }
 hadoop_major_ge3() { version_ge "$(hadoop_version)" 3.0.0; }
 
-# ---- hadoop-env.sh JAVA_HOME repair ---------------------------------------
-fix_hadoop_env_java() {
-  local f; f="$(hadoop_conf_dir)/hadoop-env.sh"
-  [ -f "$f" ] || return 0
-  local cur
-  cur=$(grep -E '^[[:space:]]*export[[:space:]]+JAVA_HOME=' "$f" | tail -n1 \
-        | sed -E 's/^[[:space:]]*export[[:space:]]+JAVA_HOME=//; s/^"//; s/"$//')
-  cur=$(eval echo "$cur" 2>/dev/null)
-  if [ -z "$cur" ]; then
-    # start-dfs.sh starts the daemons over SSH, where the JAVA_HOME of this shell
-    # is not visible ("ERROR: JAVA_HOME is not set and could not be found")
-    if [ -n "${JAVA_HOME:-}" ] && [ -w "$f" ]; then
-      printf '\nexport JAVA_HOME=%s\n' "$JAVA_HOME" >> "$f"
-      note_fix "hadoop-env.sh had no JAVA_HOME: added export JAVA_HOME=$JAVA_HOME"
-    else
-      ok "hadoop-env.sh does not set JAVA_HOME; the environment value is used ($JAVA_HOME)"
-    fi
-    return 0
-  fi
-  if [ -x "$cur/bin/java" ]; then
-    ok "hadoop-env.sh JAVA_HOME: $cur"
-    return 0
-  fi
-  fail "hadoop-env.sh exports an invalid JAVA_HOME: $cur"
-  local bak="$f.bak.$(date +%Y%m%d_%H%M%S)"
-  if cp "$f" "$bak" 2>/dev/null; then
-    sed -i -E '/^[[:space:]]*export[[:space:]]+JAVA_HOME=/d' "$f"
-    printf '\nexport JAVA_HOME=%s\n' "$JAVA_HOME" >> "$f"
-    note_fix "hadoop-env.sh: export JAVA_HOME=$JAVA_HOME (backup: $bak)"
-  else
-    warn "Cannot edit $f (no write permission). Relying on the environment variable."
-  fi
-}
-
-# ---- write a pseudo-distributed config when there is none ------------------
+# ---- configuration files ---------------------------------------------------
 _xml() {   # _xml FILE prop=value ...
   local f=$1; shift
   {
@@ -64,34 +69,19 @@ _xml() {   # _xml FILE prop=value ...
     echo '</configuration>'
   } > "$f"
 }
-write_pseudo_config() {
-  local d; d=$(hadoop_conf_dir)
-  local ts; ts=$(date +%Y%m%d_%H%M%S)
-  local data="$HADOOP_DATA_DIR"
-  mkdir -p "$data/tmp" "$data/namenode" "$data/datanode"
-  local f
-  for f in core-site.xml hdfs-site.xml; do [ -f "$d/$f" ] && cp "$d/$f" "$d/$f.bak.$ts"; done
-  _xml "$d/core-site.xml" "fs.defaultFS=hdfs://localhost:9000" "hadoop.tmp.dir=$data/tmp"
-  _xml "$d/hdfs-site.xml" "dfs.replication=1" \
-       "dfs.namenode.name.dir=file://$data/namenode" \
-       "dfs.datanode.data.dir=file://$data/datanode" \
-       "dfs.permissions.enabled=false"
-  [ -f "$d/mapred-site.xml" ] || _xml "$d/mapred-site.xml" "mapreduce.framework.name=local"
-  note_fix "Wrote pseudo-distributed Hadoop config in $d (old files backed up as *.bak.$ts)"
-  show "cat $d/core-site.xml"; cat "$d/core-site.xml"
+# move_hdfs_data DIR : use another data directory from now on (and remember it)
+move_hdfs_data() {
+  HADOOP_DATA_DIR=$1
+  printf '%s\n' "$HADOOP_DATA_DIR" > "$STATE_DIR/hadoop-data-dir"
+  rm -f "$(hadoop_conf_dir)/.built-for"
+  build_hadoop_conf
 }
 
 # ---- Hadoop base environment ----------------------------------------------
 ensure_hadoop() {
   ensure_java "8 11 17" || return 1
   ensure_tool hadoop || return 1
-  local want_conf="${HADOOP_CONF_DIR:-}"
-  export HADOOP_CONF_DIR="$(hadoop_conf_dir)"
-  if [ -n "$want_conf" ] && [ "$want_conf" != "$HADOOP_CONF_DIR" ]; then
-    fail "HADOOP_CONF_DIR pointed to a directory without a Hadoop configuration: $want_conf"
-    note_fix "export HADOOP_CONF_DIR=$HADOOP_CONF_DIR"
-  fi
-  [ -d "$HADOOP_CONF_DIR" ] || die "Hadoop configuration directory missing: $HADOOP_CONF_DIR"
+  build_hadoop_conf
   export HADOOP_MAPRED_HOME="$HADOOP_HOME" HADOOP_COMMON_HOME="$HADOOP_HOME" HADOOP_HDFS_HOME="$HADOOP_HOME"
   export YARN_HOME="$HADOOP_HOME" HADOOP_COMMON_LIB_NATIVE_DIR="$HADOOP_HOME/lib/native"
   if [ "$(id -u)" -eq 0 ]; then
@@ -99,59 +89,17 @@ ensure_hadoop() {
     export HDFS_NAMENODE_USER=root HDFS_DATANODE_USER=root HDFS_SECONDARYNAMENODE_USER=root
     export YARN_RESOURCEMANAGER_USER=root YARN_NODEMANAGER_USER=root
   fi
-  export HADOOP_OPTS="${HADOOP_OPTS:-} -Djava.library.path=$HADOOP_HOME/lib/native"
-
-  check "Hadoop configuration ($HADOOP_CONF_DIR)"
-  fix_hadoop_env_java
+  export HADOOP_OPTS="-Djava.library.path=$HADOOP_HOME/lib/native"
 
   # HDFS CLI layout: 'hdfs dfs' on normal builds, 'hadoop fs' if this hdfs script lacks it
   local o; o=$("$HADOOP_HOME/bin/hdfs" dfs -help 2>&1)
   if echo "$o" | grep -qi 'unknown command'; then
-    warn "'hdfs dfs' is not supported by $HADOOP_HOME/bin/hdfs"
     HDFS_CLI=("$HADOOP_HOME/bin/hadoop" fs)
-    fixmsg "Using 'hadoop fs' for file operations"
   else
     HDFS_CLI=("$HADOOP_HOME/bin/hdfs" dfs)
   fi
-  ok "HDFS command: ${HDFS_CLI[*]}"
-
-  # the runner's own copy always gets the runner's configuration (a hand-edited
-  # or half-written core-site.xml is replaced, the old file is kept as a backup)
-  case "$(readlink -f "$HADOOP_HOME")" in
-    "$(readlink -f "$STACK_DIR")"/*)
-      if [ "$AUTO_WRITE_HADOOP_CONF" = 1 ] && ! grep -qs 'written by bigdata-lab-runner' "$HADOOP_CONF_DIR/core-site.xml"; then
-        write_pseudo_config
-      fi ;;
-  esac
-  local fs; fs=$(hconf fs.defaultFS)
-  if [ -z "$fs" ] || [ "$fs" = "file:///" ]; then
-    fail "fs.defaultFS is not configured (Hadoop would use the local filesystem, not HDFS)"
-    if [ "$AUTO_WRITE_HADOOP_CONF" = 1 ]; then
-      write_pseudo_config
-      fs=$(hconf fs.defaultFS)
-    else
-      die "Set fs.defaultFS in $HADOOP_CONF_DIR/core-site.xml or set AUTO_WRITE_HADOOP_CONF=1"
-    fi
-  fi
-  # the host in fs.defaultFS must resolve, or the NameNode cannot even bind (typical after a hostname change)
-  local host; host=$(printf '%s' "$fs" | sed -E 's#^[a-zA-Z]+://##; s#[:/].*$##')
-  if [ -n "$host" ] && [ "$host" != localhost ] && ! getent hosts "$host" >/dev/null 2>&1; then
-    fail "fs.defaultFS uses the host name '$host', which does not resolve on this machine (hostname changed?)"
-    if [ "$AUTO_WRITE_HADOOP_CONF" = 1 ]; then
-      local d="$HADOOP_CONF_DIR" ts; ts=$(date +%Y%m%d_%H%M%S)
-      cp "$d/core-site.xml" "$d/core-site.xml.bak.$ts" 2>/dev/null
-      if sed -i -E "s#(hdfs://)$host([:/<])#\1localhost\2#g" "$d/core-site.xml" 2>/dev/null; then
-        fs=$(hconf fs.defaultFS)
-        note_fix "core-site.xml: fs.defaultFS host '$host' replaced by localhost (backup: core-site.xml.bak.$ts)"
-      else
-        warn "Cannot edit $d/core-site.xml (no write permission)"
-      fi
-    else
-      die "Fix fs.defaultFS in $HADOOP_CONF_DIR/core-site.xml (use localhost) or set AUTO_WRITE_HADOOP_CONF=1"
-    fi
-  fi
-  HDFS_URI=$fs
-  ok "fs.defaultFS = $fs"
+  HDFS_URI=$(hconf fs.defaultFS)
+  ok "fs.defaultFS = $HDFS_URI"
   note_ok "Hadoop $(hadoop_version): $HADOOP_HOME"
 }
 
@@ -313,20 +261,27 @@ stop_hdfs_of() {
   return 0
 }
 
-# stop_foreign_hadoop : HDFS/YARN daemons started from ANOTHER Hadoop copy hold
-# the ports (9000, 9870 ...) and do not answer this copy. Stop them.
-stop_foreign_hadoop() {
-  local mine pid args stuck=0
+# _hadoop_daemons : "PID ARGS" of every HDFS/YARN daemon process on this PC
+_hadoop_daemons() {
+  ps -eo pid=,args= | grep -E 'Dproc_(namenode|datanode|secondarynamenode|resourcemanager|nodemanager)' | grep -v grep
+}
+# stop_hadoop_daemons all|foreign : stop the daemons that block the lab.
+#   foreign = started from another Hadoop copy; all = every one (when the
+#   running HDFS does not answer the lab's configuration)
+stop_hadoop_daemons() {
+  local which=$1 mine pid args stuck=0
   mine=$(readlink -f "$HADOOP_HOME")
   while read -r pid args; do
     [ -n "$pid" ] || continue
-    case "$args" in *"$mine/"*|*"$HADOOP_HOME/"*) continue ;; esac
-    fail "A Hadoop daemon from another installation is running (pid $pid, user $(ps -o user= -p "$pid" 2>/dev/null))"
-    note_fix "Stopping it so the lab's own Hadoop can start"
-    kill_pid "$pid"
-    [ -d "/proc/$pid" ] && stuck=1
-  done < <(ps -eo pid=,args= | grep -E 'Dproc_(namenode|datanode|secondarynamenode|resourcemanager|nodemanager)' | grep -v grep)
-  [ "$stuck" = 0 ] || die "Hadoop daemons of another user are running and hold the HDFS ports. Restart the PC, or ask that user to run stop-all.sh."
+    if [ "$which" = foreign ]; then
+      case "$args" in *"$mine/"*|*"$HADOOP_HOME/"*) continue ;; esac
+      fail "A Hadoop daemon from another installation is running (pid $pid, user $(ps -o user= -p "$pid" 2>/dev/null))"
+    else
+      fail "A Hadoop daemon that does not answer the lab is running (pid $pid, user $(ps -o user= -p "$pid" 2>/dev/null))"
+    fi
+    stop_pid_any "$pid" "This Hadoop daemon" || stuck=1
+  done < <(_hadoop_daemons)
+  [ "$stuck" = 0 ] || die "Hadoop daemons of another user are still running and hold the HDFS ports. Restart the PC and run the lab again."
 }
 
 # _hdfs_reset : last resort when HDFS does not start with the data that is on
@@ -350,7 +305,7 @@ _hdfs_reset() {
 ensure_hdfs_running() {
   ensure_hadoop || return 1
   check "HDFS services"
-  stop_foreign_hadoop
+  stop_hadoop_daemons foreign
   run jps || true
   if hproc_running NameNode && hproc_running DataNode && hdfs_alive; then
     note_ok "NameNode and DataNode already running"
@@ -360,14 +315,10 @@ ensure_hdfs_running() {
   info "HDFS is not running yet"
   [ "$AUTO_START_SERVICES" = 1 ] || die "AUTO_START_SERVICES=0, start HDFS manually"
 
-  # a NameNode from ANOTHER Hadoop copy (different directory or config) does not answer this copy
-  if hproc_running NameNode && ! hdfs_alive; then
-    local other; other=$(running_hadoop_home)
-    if [ -n "$other" ] && [ "$other" != "$(readlink -f "$HADOOP_HOME")" ]; then
-      fail "A NameNode is running from another Hadoop copy: $other"
-      note_fix "Stopping the daemons of $other so the selected copy ($HADOOP_HOME) can start"
-      stop_hdfs_of "$other"
-    fi
+  # daemons of this same copy that were started with the PC's own configuration
+  # (another port, another data directory) do not answer the lab's configuration
+  if [ -n "$(_hadoop_daemons)" ] && ! hdfs_alive; then
+    stop_hadoop_daemons all
   fi
 
   local ssh_ok=1
@@ -376,9 +327,8 @@ ensure_hdfs_running() {
     warn "NameNode has never been formatted ($NN_DIR)"
     if ! mkdir -p "$NN_DIR" 2>/dev/null || [ ! -w "$NN_DIR" ]; then
       fail "The NameNode directory is not writable by $(id -un): $NN_DIR"
-      [ "$AUTO_WRITE_HADOOP_CONF" = 1 ] || die "Change dfs.namenode.name.dir in hdfs-site.xml or set AUTO_WRITE_HADOOP_CONF=1"
-      note_fix "Using $HADOOP_DATA_DIR for the HDFS name and data directories instead"
-      write_pseudo_config
+      note_fix "Using a new HDFS data directory for this user: $HOME/hadoopdata_$(id -un)"
+      move_hdfs_data "$HOME/hadoopdata_$(id -un)"
       namenode_needs_format || true
     fi
     fixmsg "Formatting the NameNode (first time only, nothing to lose yet)"
@@ -386,11 +336,9 @@ ensure_hdfs_running() {
   else
     ok "NameNode already formatted ($NN_DIR)"
     if [ ! -w "$NN_DIR/current" ]; then
-      [ "$AUTO_WRITE_HADOOP_CONF" = 1 ] || die "The HDFS name directory $NN_DIR belongs to another user ($(stat -c %U "$NN_DIR/current" 2>/dev/null))."
       fail "The HDFS name directory $NN_DIR belongs to another user ($(stat -c %U "$NN_DIR/current" 2>/dev/null))"
-      HADOOP_DATA_DIR="$HOME/hadoopdata_$(id -un)"
-      note_fix "Using a new HDFS data directory for this user: $HADOOP_DATA_DIR"
-      write_pseudo_config
+      note_fix "Using a new HDFS data directory for this user: $HOME/hadoopdata_$(id -un)"
+      move_hdfs_data "$HOME/hadoopdata_$(id -un)"
       namenode_needs_format && { run "$HADOOP_HOME/bin/hdfs" namenode -format -force -nonInteractive || die "NameNode format failed"; }
     fi
   fi
@@ -406,9 +354,9 @@ ensure_hdfs_running() {
   if [ "$up" = 0 ]; then
     if fix_datanode_clusterid; then
       start_hdfs_daemons 0
-      wait_hdfs || _hdfs_reset || die "HDFS did not come up. Check $HADOOP_HOME/logs"
+      wait_hdfs || _hdfs_reset || die "HDFS did not come up. Check $HADOOP_RUN_DIR/logs"
     else
-      _hdfs_reset || die "HDFS did not come up. Check $HADOOP_HOME/logs"
+      _hdfs_reset || die "HDFS did not come up. Check $HADOOP_RUN_DIR/logs"
     fi
   fi
   run jps
@@ -421,7 +369,8 @@ use_local_mr() {
   local d="$STATE_DIR/hadoop-conf-localmr"
   rm -rf "$d"; mkdir -p "$d"
   cp -r "$HADOOP_CONF_DIR"/. "$d"/
-  _xml "$d/mapred-site.xml" "mapreduce.framework.name=local"
+  _xml "$d/mapred-site.xml" "mapreduce.framework.name=local" \
+       "mapreduce.jobtracker.staging.root.dir=$HADOOP_DATA_DIR/tmp/mapred/staging"
   export HADOOP_CONF_DIR="$d"
   MR_MODE=local
   note_fix "Jobs will run in local MapReduce mode (HADOOP_CONF_DIR=$d)"
