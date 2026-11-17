@@ -2,13 +2,16 @@
 # lab-runner - Big Data Analytics Lab Runner (launcher window)
 #
 #   ./lab-runner            interactive menu
-#   ./lab-runner 5          run Lab 5 directly (also 4a, 4b, all, diag)
+#   ./lab-runner 5          run Lab 5 directly (also 4a, 4b, all, diag, setup)
+#   ./lab-runner --here 5   same, but in this window instead of a new one
 #
 # Each lab opens in its own terminal window. This window shows the menu,
 # live progress lines, and "Lab N done" / "Lab N failed" at the end.
+# Exit code with an argument: 0 when every lab that ran passed, 1 otherwise.
 
 RUNNER_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 . "$RUNNER_DIR/core/common.sh"
+case "${1:-}" in --here|-i|--inline) LAB_NEW_WINDOW=0; shift ;; esac
 . "$RUNNER_DIR/core/terminal.sh"
 . "$RUNNER_DIR/core/detect.sh"
 
@@ -33,6 +36,12 @@ show_menu() {
   printf '  %s Hive\n'               "$(mark "$ENV_HIVE")"
   printf '  %s Spark\n'              "$(mark "$ENV_SPARK")"
   printf '  %s Kafka\n'              "$(mark "$ENV_KAFKA")"
+  local miss; miss=$(missing_software)
+  if [ -n "$miss" ]; then
+    echo
+    echo "  ${C_YELLOW}[!] Not installed: $miss${C_RESET}"
+    echo "      Type S and press ENTER to install it."
+  fi
   echo
   echo "$LINE2"
   echo "Select a Lab"
@@ -75,9 +84,13 @@ wait_for_lab() {
         echo "    [✗] The lab window closed before the lab finished."
         break
       fi
-    elif [ "$started" = 0 ] && [ "$ticks" -gt 60 ]; then
-      echo "    [✗] The lab window did not start (30s). Check that a terminal emulator is installed."
-      break
+    elif [ "$started" = 0 ]; then
+      # the window never started: the emulator exited with an error, or 20 s passed
+      if [ -n "${SPAWN_PID:-}" ] && ! kill -0 "$SPAWN_PID" 2>/dev/null; then
+        wait "$SPAWN_PID" 2>/dev/null || return 2
+        SPAWN_PID=""
+      fi
+      [ "$ticks" -gt 40 ] && return 2
     fi
     sleep 0.5
     ticks=$((ticks + 1))
@@ -85,7 +98,7 @@ wait_for_lab() {
 }
 
 run_lab() {
-  local id=$1 title name st t0 t1
+  local id=$1 title name st t0 t1 inline=0
   title=$(lab_title_for "$id"); name=$(lab_short_name "$id")
   rm -f "$STATE_DIR/lab$id.progress" "$STATE_DIR/lab$id.status" "$STATE_DIR/lab$id.pid"
   : > "$STATE_DIR/lab$id.progress"
@@ -93,35 +106,70 @@ run_lab() {
   echo "$LINE2"
   echo "${C_BOLD}$title${C_RESET}"
   t0=$(date +%s)
-  if spawn_terminal "$title" "$CORE_DIR/labshell.sh" "$id"; then
+  if [ "${LAB_NEW_WINDOW:-1}" != 1 ]; then
+    inline=1
+  elif spawn_terminal "$title" "$CORE_DIR/labshell.sh" "$id"; then
     info "Opened a new terminal window for the lab. Watch the commands there."
     echo "    Progress:"
     wait_for_lab "$id"
+    if [ $? -eq 2 ]; then
+      warn "The lab window did not open ($TERM_EMULATOR). Running the lab in this window instead."
+      inline=1
+    fi
   else
     warn "No graphical terminal found. Running the lab in this window."
-    LAB_INLINE=1 bash "$CORE_DIR/labshell.sh" "$id"
+    inline=1
   fi
+  [ "$inline" = 1 ] && LAB_INLINE=1 bash "$CORE_DIR/labshell.sh" "$id"
   t1=$(date +%s)
   st=$(cat "$STATE_DIR/lab$id.status" 2>/dev/null)
   if [ "$st" = OK ]; then
     echo "${C_GREEN}${C_BOLD}[✓] $name done${C_RESET}  ($((t1 - t0))s)"
   else
-    echo "${C_RED}${C_BOLD}[✗] $name failed${C_RESET}  ($((t1 - t0))s)   log: logs/lab$id.log"
+    st=FAIL
+    ANY_FAILED=1
+    echo "${C_RED}${C_BOLD}[✗] $name failed${C_RESET}  ($((t1 - t0))s)"
+    show_failure "$id"
   fi
   LAST_STATUS=$st
+  LAST_SECONDS=$((t1 - t0))
+}
+
+# show_failure ID : why the lab failed, without opening the log
+show_failure() {
+  local f="$LOG_DIR/lab$1.log"
+  [ -f "$f" ] || { echo "    No log was written: the lab did not start."; return 0; }
+  local why; why=$(grep -E '^\[FAIL\]' "$f" | grep -v 'failed\. Log:' | tail -n 4 | sed 's/^\[FAIL\] /      - /')
+  echo "    What went wrong:"
+  echo "${why:-      - no error line was recorded, the last lines of the log are:
+$(tail -n 6 "$f" | sed 's/^/        /')}"
+  echo "    Full log: $(readlink -f "$f")"
 }
 
 run_all() {
-  local id summary="" ans
+  local id summary="" ans line out="$RESULTS_DIR/last_run_summary.txt" nfail=0 npass=0
   for id in "${LAB_IDS[@]}"; do
     run_lab "$id"
-    summary="$summary$(printf '  %-8s %s\n' "$(lab_short_name "$id")" "${LAST_STATUS:-FAIL}")"$'\n'
-    if [ "$LAST_STATUS" != OK ]; then
-      read -rp "    Continue with the next lab? [Y/n] " ans
-      case "$ans" in n|N) break ;; esac
+    line=$(printf '  %-8s %-5s %4ss' "$(lab_short_name "$id")" "$LAST_STATUS" "$LAST_SECONDS")
+    summary="$summary$line"$'\n'
+    if [ "$LAST_STATUS" = OK ]; then
+      npass=$((npass + 1))
+    else
+      nfail=$((nfail + 1))
+      if [ -t 0 ]; then
+        read -rp "    Continue with the next lab? [Y/n] " ans
+        case "$ans" in n|N) break ;; esac
+      fi
     fi
   done
-  echo; echo "$LINE"; echo " RUN ALL - SUMMARY"; echo "$LINE"; printf '%s' "$summary"
+  {
+    echo "$LINE"; echo " RUN ALL - SUMMARY   ($(date '+%Y-%m-%d %H:%M'))"; echo "$LINE"
+    printf '%s' "$summary"
+    echo "$LINE2"
+    echo "  $npass passed, $nfail failed"
+  } | tee "$out"
+  echo "  (saved in $out)"
+  [ "$nfail" -eq 0 ]
 }
 
 view_log() {
@@ -206,16 +254,19 @@ usage() {
   echo "       ./lab-runner all          run every lab in order"
   echo "       ./lab-runner diag         diagnostics report only"
   echo "       ./lab-runner setup        install the missing lab software"
+  echo "       ./lab-runner --here <...> run in this window instead of opening a new one"
 }
 if [ -n "${1:-}" ]; then
   case "$1" in -h|--help|help) usage; exit 0 ;; esac
   scan_environment
+  ANY_FAILED=0
   case "$(echo "$1" | tr 'A-Z' 'a-z')" in
     all|a)  auto_setup; run_all ;;
     diag|d) run_lab diag ;;
-    setup|s|install) run_lab setup; [ "$LAST_STATUS" = OK ] ;;
+    setup|s|install) run_lab setup ;;
     *)      sel=$(menu_to_id "$1"); [ -n "$sel" ] || { echo "Unknown lab: $1"; usage; exit 2; }; auto_setup; run_selection "$sel" ;;
   esac
+  [ "$ANY_FAILED" = 0 ]
   exit $?
 fi
 

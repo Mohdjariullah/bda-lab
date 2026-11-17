@@ -42,6 +42,10 @@ lab_main() {
   show "cat producer.py"; cat producer.py
   show "cat consumer.py"; cat consumer.py
 
+  # newer kafka-python releases print a DeprecationWarning about the lambda
+  # (de)serializers used in the manual programs; it is not an error
+  export PYTHONWARNINGS="ignore::DeprecationWarning"
+
   step 5 "Start the consumer in the background (it listens until stopped)"
   show "python3 consumer.py > consumer.log &"
   # unbuffered: python holds print() output back when it goes to a file, so the

@@ -137,6 +137,11 @@ seconds (type `S` and press ENTER within 10 seconds to skip). It installs:
 - Hadoop 3.3.6, Pig 0.17.0, Hive 3.1.3, Spark 3.5.3 and Kafka 3.6.2 from
   Apache into `~/bigdata_stack` (no administrator rights needed).
 - MongoDB from the MongoDB `apt` repository (Ubuntu 20.04, 22.04, 24.04).
+- The Python packages for labs 1, 2 and 10 (numpy, pandas, matplotlib, seaborn, kafka-python).
+
+Setup ends with a **SETUP SUMMARY**: one line per tool, `[✓]` or `[✗]`. If a
+line is `[✗]`, the line above the summary says why (for example no internet).
+Choose **S** again after you fix it. What is already installed is kept.
 
 Anything already installed is skipped. You need internet and about 7 GB of
 free disk space. To run it again later, choose **S** in the menu or type
@@ -335,7 +340,8 @@ The lab window is plain. It shows only the commands that were run
 no "completed" message, so the window simply stops printing.
 
 If the lab has its own window, it stays open until you press **Enter**
-(nothing is printed while it waits), so you can read the output.
+(nothing is printed while it waits), so you can read the output. When a lab
+fails, the window says `Press ENTER to close this window...`.
 
 The **launcher** window tells you the result:
 
@@ -346,8 +352,14 @@ The **launcher** window tells you the result:
 or, when something failed:
 
 ```
-[✗] Lab 5 failed  (12s)   log: logs/lab05.log
+[✗] Lab 5 failed  (12s)
+    What went wrong:
+      - Pig is not installed. Searched: /home/student /home /opt ...
+    Full log: /home/student/bda-lab/logs/lab05_20260101_101500.log
 ```
+
+The lines under `What went wrong` are the errors of that lab. You do not
+need to open the log to see them.
 
 The full story (every check, fix and step) is always saved in the log file
 `logs/lab05.log`. To see the extra lines in the lab window too, set
@@ -554,7 +566,10 @@ the tool finds on your PC. It changes nothing.
 | `Lab N failed` | Press `L` in the menu, type the lab number, and read the **last** `[✗]` line. It tells you what failed |
 | The tool uses the wrong Hadoop (your PC has two copies) | See "Choose the correct copy" below |
 | `Pig is not installed` / `Hive is not installed` / `Hadoop not found` | The tool searched your PC and did not find it. Ask the lab assistant where it is installed, then see "Choose the correct copy" below |
-| `No MongoDB package is available` | MongoDB is not installed on this PC. Ask the lab assistant |
+| `MongoDB is missing` | Type `S` in the menu (Setup). It installs MongoDB. Then run Lab 6 again |
+| The menu shows `[!] Not installed: ...` | Type `S` in the menu (Setup). Read the SETUP SUMMARY at the end |
+| Setup stops at a download | Check the internet and type `S` again. The download continues from where it stopped |
+| You want the lab in the same window (no second window) | Type `./lab-runner --here 5`, or set `LAB_NEW_WINDOW=0` in `config/environment.conf` |
 | `Authentication failed or cancelled` | The password was wrong 3 times, or you cancelled. Run the lab again |
 | `student is not in the sudoers file` | Your account cannot use `sudo`. Labs that do not need `sudo` still work. Ask the lab assistant for the other labs |
 | `Could not install numpy` (or another Python package) | Check the internet. Then run the lab again |
@@ -627,7 +642,9 @@ cd ~/bda-lab              # go to the tool folder
 ./lab-runner              # open the menu
 ./lab-runner 5            # run Lab 5 directly
 ./lab-runner 4            # run Lab 4a, then Lab 4b
-./lab-runner all          # run all labs
+./lab-runner all          # run all labs, summary saved in results/last_run_summary.txt
+./lab-runner setup        # install what is missing
+./lab-runner --here 5     # run Lab 5 in this window (no second window)
 ./lab-runner diag         # check the PC only (changes nothing)
 ./lab-runner --help       # show these options
 xdg-open results          # open the results folder
@@ -731,7 +748,14 @@ Spark and Kafka accept a JRE; labs that compile Java require `javac`.
 | `fs.defaultFS` host does not resolve (hostname changed) | Rewrites the host to `localhost` (backup kept) |
 | A NameNode from another Hadoop copy is running | Stops those daemons, starts the selected copy |
 | NameNode name dir not writable | Repoints name/data dirs to `HADOOP_DATA_DIR`, or stops with a clear message when it belongs to another user |
-| SSH to localhost denied | Creates a key and `authorized_keys`; if SSH still fails, starts daemons with `hdfs --daemon start` (no SSH needed) |
+| SSH to localhost denied | Creates a key and `authorized_keys` when an SSH server is running. Without one (or if SSH still fails) it starts the daemons with `hdfs --daemon start`. It never installs an SSH server |
+| `hadoop-env.sh` has no `JAVA_HOME` | Adds it, so `start-dfs.sh` over SSH finds Java |
+| Lab window closed while HDFS/YARN run | Daemons are started in their own session (`setsid`), so closing the window does not stop them |
+| No systemd (WSL, containers) | MongoDB is started as a local `mongod` with its data in `~/bigdata_labs/mongodata` |
+| Kafka broker killed, ZooKeeper still holds its registration (`NodeExistsException`) | Waits for the old session to expire and starts the broker again (up to 3 times) |
+| JVM prints `Picked up _JAVA_OPTIONS` / `JAVA_TOOL_OPTIONS` | Version detection skips that line |
+| Terminal emulator fails to open a window | The lab runs in the launcher window instead |
+| `apt` lock held by automatic updates | Waits up to 5 minutes for the lock |
 | NameNode never formatted | Formats once (only when the name dir is empty) |
 | DataNode `Incompatible clusterIDs` | Clears the DataNode storage dir and restarts it |
 | NameNode in safe mode | Waits, then leaves safe mode |
@@ -797,6 +821,10 @@ SERVICE_TIMEOUT=90        # seconds to wait for a service
 MAX_FIX_ATTEMPTS=2        # fix-and-retry rounds per command
 KAFKA_PORT=9092
 TERM_EMULATOR=""          # force a terminal emulator, e.g. gnome-terminal
+LAB_NEW_WINDOW=1          # 0 = run labs in the launcher window (same as --here)
+LAB_RAW_OUTPUT=1          # 0 = lab window also shows [CHECK]/[STEP]/[FIX] lines
+AUTO_SETUP=1              # 0 = only the S menu entry installs software
+STACK_DIR="$HOME/bigdata_stack"   # where Setup unpacks the Apache tools
 ```
 
 ## Known limits
@@ -810,16 +838,27 @@ TERM_EMULATOR=""          # force a terminal emulator, e.g. gnome-terminal
 - Single machine (pseudo-distributed) only. Multi-node clusters are out of scope.
 - If `sudo` is missing or the user is not a sudoer, root steps are reported as
   failed with a clear message; everything else still runs.
-- The tool does not download Hadoop, Hive, Pig, Spark, Kafka or MongoDB.
-  It finds, configures, starts and repairs them.
+- Setup needs `apt` (Ubuntu or Debian) for Java and MongoDB. On other
+  distributions install those two by hand; the Apache tools still download.
+- MongoDB 8 needs a CPU with AVX. On very old PCs or some virtual machines
+  `mongod` does not start and only Lab 6 fails.
 
 ## Tested
 
-On Ubuntu 24.04 with Hadoop 3.3.6, Pig 0.17.0, Hive 3.1.3, Kafka 3.9.0,
-MongoDB 8.0.4, PySpark, and Java 8 and 17 side by side: all 11 lab entries
-pass in `./lab-runner all`. The three-window flow (launcher, lab window,
-auth window) and the wrong-password retry were tested with a real X display
-and a non-root sudo user.
+Fresh Ubuntu 24.04 with only Java 21 and Python installed, no systemd and no
+SSH server (the hardest case: nothing to reuse):
+
+- `./lab-runner all` installs everything through Setup and then all 11 lab
+  entries pass, with the outputs shown in section 10.
+- Run again after all daemons were killed (same as after a reboot): all pass.
+- Run with each lab in its own window (xterm and gnome-terminal on an X
+  display): windows open, close on ENTER, and HDFS/Kafka keep running.
+- Forced failures: no internet during Setup, a tool removed, a window closed
+  in the middle of a lab, a terminal emulator that cannot start, Kafka and
+  ZooKeeper killed with `kill -9`.
+- The password window (FIFO hand-over and cancel) was tested with typed
+  input. This round ran as root, so the complete `sudo` flow with a
+  non-root user (wrong password, retry) was not run again.
 
 ## License
 

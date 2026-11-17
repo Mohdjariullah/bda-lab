@@ -108,9 +108,15 @@ _logline() { [ -n "${LAB_LOG:-}" ] && printf '%s\n' "$*" >> "$LAB_LOG"; return 0
 
 # ---- running commands ------------------------------------------------------
 # run CMD ARGS...   : echo the command, run it, show output, log it, return its exit code
+# _cmd_label CMD... : the command as a student would type it. The runner's own
+# safety wrappers (hang timeout, heap settings) are not part of the lab command.
+_cmd_label() {
+  printf '%s' "$*" | sed -E 's/^timeout --foreground -k [0-9]+ [0-9]+ //; s/^env ([A-Za-z_]+=[^ ]* )+//'
+}
 run() {
-  printf '\n%s$ %s%s\n' "$C_BOLD" "$*" "$C_RESET"
-  _logline "" ; _logline "$ $*"
+  local label; label=$(_cmd_label "$@")
+  printf '\n%s$ %s%s\n' "$C_BOLD" "$label" "$C_RESET"
+  _logline "" ; _logline "$ $label"
   "$@" 2>&1 | tee -a "${LAB_LOG:-/dev/null}"
   return "${PIPESTATUS[0]}"
 }
@@ -135,8 +141,9 @@ run_t() { local t=$1; shift; run timeout --foreground -k 5 "$t" "$@"; }
 # function FILTERFN before it is shown and logged. Exit code is the command's.
 run_pipe() {
   local filt=$1; shift
-  printf '\n%s$ %s%s\n' "$C_BOLD" "$*" "$C_RESET"
-  _logline "" ; _logline "$ $*"
+  local label; label=$(_cmd_label "$@")
+  printf '\n%s$ %s%s\n' "$C_BOLD" "$label" "$C_RESET"
+  _logline "" ; _logline "$ $label"
   "$@" 2>&1 | "$filt" | tee -a "${LAB_LOG:-/dev/null}"
   return "${PIPESTATUS[0]}"
 }
@@ -185,6 +192,17 @@ lab_workdir() {   # lab_workdir NAME : create and enter the lab's work directory
   LAB_RESULTS="$RESULTS_DIR/$1"
   show "cd $LAB_WORK"
   cd "$LAB_WORK" || die "Cannot enter $LAB_WORK"
+}
+
+# detached CMD... : run CMD in its own session, cut off from this terminal.
+# A daemon started from a lab window is otherwise killed (SIGHUP) the moment
+# the window is closed, and the next lab finds HDFS or YARN gone.
+detached() {
+  if have setsid; then
+    if setsid --help 2>&1 | grep -q -- '--wait'; then setsid --wait "$@"; else setsid "$@"; fi
+  else
+    nohup "$@"
+  fi
 }
 
 # background helpers started by a lab (feeders etc.). Killed when the lab ends.

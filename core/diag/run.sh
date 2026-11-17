@@ -14,8 +14,12 @@ lab_main() {
 
   echo; echo "${C_BOLD}OPERATING SYSTEM${C_RESET}"
   _d_ok "$(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME" || uname -s)  ($(uname -m))"
-  _d_item "Graphical session (needed for separate lab windows)" "has_display"
-  if detect_terminal_emulator; then _d_ok "Terminal emulator: $TERM_EMULATOR"; else _d_bad "No terminal emulator found (labs run inline)"; fi
+  if has_display; then
+    _d_ok "Graphical session"
+    if detect_terminal_emulator; then _d_ok "Terminal emulator: $TERM_EMULATOR"; else info "No terminal emulator found: the labs run in the launcher window"; fi
+  else
+    info "No graphical session: the labs run in the launcher window instead of a new one"
+  fi
 
   echo; echo "${C_BOLD}JAVA${C_RESET}"
   local list; list=$(list_javas)
@@ -32,7 +36,7 @@ lab_main() {
   _d_item "python3 ($(python3 --version 2>&1))" "have python3"
   _d_item "pip" "python3 -m pip --version"
   local m
-  for m in numpy pandas matplotlib seaborn pyspark kafka; do
+  for m in numpy pandas matplotlib seaborn kafka; do
     _d_item "module $m" "python3 -c 'import $m'"
   done
 
@@ -64,8 +68,7 @@ lab_main() {
   fi
 
   echo; echo "${C_BOLD}SSH${C_RESET}"
-  _d_item "sshd installed" "[ -x /usr/sbin/sshd ] || have sshd"
-  _d_item "passwordless ssh localhost" "_ssh_ok"
+  if _ssh_ok; then _d_ok "passwordless ssh localhost"; else info "No passwordless SSH to localhost (not a problem: the HDFS daemons are started directly)"; fi
 
   echo; echo "${C_BOLD}PIG${C_RESET}"
   locate_home pig; h=$LOCATED_HOME; if [ -n "$h" ]; then _d_ok "PIG_HOME = $h ($(version_from_path "$h"))"; _d_item "pig core jar" "ls '$h'/pig-*core*.jar"; else _d_bad "Pig not found"; fi

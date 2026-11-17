@@ -7,6 +7,7 @@
 #   apt      JDK 8 (fallback 11, 17), curl, tar, gpg, python3
 #   Apache   Hadoop, Pig, Hive, Spark, Kafka  ->  $STACK_DIR (no root needed)
 #   MongoDB  mongodb-org from the MongoDB apt repository (best effort)
+#   pip      numpy, pandas, matplotlib, seaborn, kafka-python
 #
 # Versions can be changed in config/environment.conf (HADOOP_VER, ...).
 
@@ -29,8 +30,12 @@ _root() {
     run sudo env DEBIAN_FRONTEND=noninteractive "$@"
   fi
 }
+# _apt ARGS : apt-get that waits up to 5 minutes for the package lock. Right
+# after boot Ubuntu's automatic updates hold it and a plain apt-get fails with
+# "Could not get lock /var/lib/dpkg/lock-frontend".
+_apt() { _root apt-get -o DPkg::Lock::Timeout=300 "$@"; }
 
-_apt_update() { [ "$APT_UPDATED" = 1 ] && return 0; _root apt-get update || warn "apt-get update reported errors, continuing"; APT_UPDATED=1; }
+_apt_update() { [ "$APT_UPDATED" = 1 ] && return 0; _apt update || warn "apt-get update reported errors, continuing"; APT_UPDATED=1; }
 
 _jdk_majors() { list_javas | cut -f1 | sort -un | tr '\n' ' '; }
 _have_jdk()   { _jdk_majors | grep -qw "$1"; }
@@ -40,13 +45,13 @@ _install_jdk() {
   _apt_update
   if ! _have_jdk 8; then
     note_info "Installing OpenJDK 8"
-    _root apt-get install -y openjdk-8-jdk-headless || warn "OpenJDK 8 is not available from apt on this system"
+    _apt install -y openjdk-8-jdk-headless || warn "OpenJDK 8 is not available from apt on this system"
   fi
   if [ -z "$(_jdk_majors | tr -d ' ')" ]; then
     local v
     for v in 11 17; do
       note_info "Installing OpenJDK $v"
-      _root apt-get install -y "openjdk-$v-jdk-headless" && break
+      _apt install -y "openjdk-$v-jdk-headless" && break
     done
   fi
   [ -n "$(_jdk_majors | tr -d ' ')" ] || { note_fail "Could not install a JDK"; return 1; }
@@ -60,7 +65,9 @@ _fetch() {
   for base in https://dlcdn.apache.org https://archive.apache.org/dist; do
     # dlcdn only keeps current releases: a 404 there is expected, so probe it quietly first
     curl -fsI -m 20 -o /dev/null "$base/$rel" || continue
-    curl -fL --retry 5 --retry-delay 3 --connect-timeout 20 -C - -# -o "$dest" "$base/$rel"; rc=$?
+    # --speed-*: a connection that stalls (under 2 kB/s for 60 s) is dropped and retried
+    # from where it stopped, instead of hanging forever
+    curl -fL --retry 5 --retry-delay 3 --connect-timeout 20 --speed-limit 2000 --speed-time 60 -C - -# -o "$dest" "$base/$rel"; rc=$?
     # 33 = the file is already complete (range not satisfiable); the checks below decide
     if [ "$rc" -eq 0 ] || [ "$rc" -eq 33 ]; then return 0; fi
   done
@@ -134,13 +141,31 @@ _install_mongo() {
        && _root bash -c "echo 'deb [ arch=amd64,arm64 signed-by=$key ] https://repo.mongodb.org/apt/ubuntu $cn/mongodb-org/$mv multiverse' > /etc/apt/sources.list.d/mongodb-org-$mv.list"; then
       APT_UPDATED=0; _apt_update
       note_info "MongoDB $mv: installing mongodb-org"
-      _root apt-get install -y mongodb-org && { note_ok "MongoDB installed"; return 0; }
+      _apt install -y mongodb-org && { note_ok "MongoDB installed"; return 0; }
     fi
   fi
   _apt_update
-  _root apt-get install -y mongodb && { note_ok "MongoDB installed (distribution package)"; return 0; }
+  _apt install -y mongodb && { note_ok "MongoDB installed (distribution package)"; return 0; }
   note_warn "MongoDB could not be installed automatically. Only Lab 6 needs it."
   return 0
+}
+
+# _setup_summary : one line per component, so the result can be read at a glance.
+# Returns 1 when something the labs need is missing (MongoDB only counts for Lab 6).
+_setup_summary() {
+  local t bad=0 j
+  echo; echo "$LINE2"; echo " SETUP SUMMARY"; echo "$LINE2"
+  _logline ""; _logline " SETUP SUMMARY"
+  j=$(_jdk_majors | tr -d ' ')
+  if [ -n "$j" ]; then note_ok "Java      JDK $(_jdk_majors)"; else note_fail "Java      no JDK (needed by labs 3 to 10)"; bad=1; fi
+  if have python3; then note_ok "Python    $(python3 --version 2>&1 | awk '{print $2}')"; else note_fail "Python    python3 not found (labs 1, 2, 8, 9, 10)"; bad=1; fi
+  for t in hadoop pig hive spark kafka; do
+    if _tool_missing "$t"; then note_fail "$(printf '%-9s' "$t") not installed"; bad=1
+    else note_ok "$(printf '%-9s' "$t") $LOCATED_HOME"; fi
+  done
+  if have mongod && { have mongosh || have mongo; }; then note_ok "MongoDB   installed"
+  else note_warn "MongoDB   not installed (only Lab 6 needs it)"; fi
+  return $bad
 }
 
 # ---- main ------------------------------------------------------------------
@@ -178,13 +203,13 @@ lab_main() {
     if have apt-get; then
       note_info "Installing system packages: ${pkgs[*]}"
       _apt_update
-      _root apt-get install -y "${pkgs[@]}" || { note_fail "Could not install: ${pkgs[*]}"; return 1; }
+      _apt install -y "${pkgs[@]}" || { note_fail "Could not install: ${pkgs[*]}"; failed=1; }
     else
-      note_fail "Missing tools (${pkgs[*]}) and no apt to install them"; return 1
+      note_fail "Missing tools (${pkgs[*]}) and no apt to install them"; failed=1
     fi
   fi
   if [ "$need_jdk" = 1 ]; then
-    _install_jdk || return 1
+    _install_jdk || failed=1
   else
     ok "Nothing to install from apt"
   fi
@@ -192,8 +217,10 @@ lab_main() {
   step 3 "Downloading and installing the Apache tools"
   if [ -n "$missing_tools" ]; then
     check "Internet access"
+    have curl || { note_fail "curl is not installed, nothing can be downloaded"; _setup_summary; return 1; }
     run curl -fsI -m 25 https://archive.apache.org/dist/ -o /dev/null \
-      || { note_fail "Cannot reach archive.apache.org. Check the internet connection and run Setup again."; return 1; }
+      || run curl -fsI -m 25 https://dlcdn.apache.org/ -o /dev/null \
+      || { note_fail "Cannot reach the Apache download servers. Check the internet connection and run Setup again."; _setup_summary; return 1; }
     local k="$KAFKA_SCALA_VER-$KAFKA_INSTALL_VER"
     for t in $missing_tools; do
       case "$t" in
@@ -212,13 +239,19 @@ lab_main() {
   step 4 "MongoDB"
   _install_mongo
 
-  step 5 "Verifying the installation"
-  ensure_java "8 11 17" || failed=1
-  for t in hadoop pig hive spark kafka; do
-    if _tool_missing "$t"; then note_fail "$t: not found after setup"; failed=1
-    else note_ok "$t: $LOCATED_HOME"; fi
-  done
-  if [ -n "${JAVA_HOME:-}" ]; then
+  step 5 "Python packages for labs 1, 2 and 10"
+  if ensure_python; then
+    ensure_pymods numpy:numpy:python3-numpy pandas:pandas:python3-pandas \
+                  matplotlib:matplotlib:python3-matplotlib seaborn:seaborn:python3-seaborn \
+      || { note_fail "Some Python packages for labs 1 and 2 could not be installed"; failed=1; }
+    ensure_pymods kafka:kafka-python:python3-kafka || ensure_pymods kafka:kafka-python-ng \
+      || { note_fail "kafka-python (Lab 10) could not be installed"; failed=1; }
+  else
+    failed=1
+  fi
+
+  step 6 "Verifying the installation"
+  if ensure_java "8 11 17"; then
     local hadoop_h spark_h
     locate_home hadoop; hadoop_h=$LOCATED_HOME
     if [ -n "$hadoop_h" ]; then
@@ -228,10 +261,12 @@ lab_main() {
     if [ -n "$spark_h" ]; then
       run "$spark_h/bin/spark-submit" --version || { note_fail "spark-submit does not start"; failed=1; }
     fi
+  else
+    failed=1
   fi
-  if have mongod || have mongosh || have mongo; then note_ok "MongoDB: installed"; else note_warn "MongoDB: not installed (only Lab 6 needs it)"; fi
 
-  [ "$failed" = 0 ] || { note_fail "Some parts could not be installed. Fix the problem above and choose Setup again."; return 1; }
-  ok "All lab software is installed. Choose a lab from the menu."
+  _setup_summary || failed=1
+  [ "$failed" = 0 ] || { note_fail "Some parts could not be installed. The lines marked [✗] say which and why. Fix that and choose Setup again: what is already installed is kept."; return 1; }
+  note_ok "All lab software is installed. Choose a lab from the menu."
   return 0
 }

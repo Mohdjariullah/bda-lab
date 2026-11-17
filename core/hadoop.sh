@@ -24,7 +24,14 @@ fix_hadoop_env_java() {
         | sed -E 's/^[[:space:]]*export[[:space:]]+JAVA_HOME=//; s/^"//; s/"$//')
   cur=$(eval echo "$cur" 2>/dev/null)
   if [ -z "$cur" ]; then
-    ok "hadoop-env.sh does not override JAVA_HOME; environment value is used ($JAVA_HOME)"
+    # start-dfs.sh starts the daemons over SSH, where the JAVA_HOME of this shell
+    # is not visible ("ERROR: JAVA_HOME is not set and could not be found")
+    if [ -n "${JAVA_HOME:-}" ] && [ -w "$f" ]; then
+      printf '\nexport JAVA_HOME=%s\n' "$JAVA_HOME" >> "$f"
+      note_fix "hadoop-env.sh had no JAVA_HOME: added export JAVA_HOME=$JAVA_HOME"
+    else
+      ok "hadoop-env.sh does not set JAVA_HOME; the environment value is used ($JAVA_HOME)"
+    fi
     return 0
   fi
   if [ -x "$cur/bin/java" ]; then
@@ -170,25 +177,22 @@ hdfs_rm_if_exists() {
 _ssh_ok() { timeout 15 ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 localhost true >/dev/null 2>&1; }
 ensure_ssh_localhost() {
   check "Passwordless SSH to localhost (used by start-dfs.sh)"
-  if run_t 15 ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 localhost true; then
+  # start-dfs.sh needs an SSH server. Without one the daemons are started
+  # directly with "hdfs --daemon start", which gives the same result, so
+  # nothing is installed here.
+  if ! have ssh || ! port_in_use 22; then
+    info "No SSH server on this machine. The HDFS daemons will be started directly (same result as start-dfs.sh)."
+    return 1
+  fi
+  if _ssh_ok; then
     note_ok "SSH to localhost works"
     return 0
   fi
   warn "Passwordless SSH to localhost is not configured"
-  if ! [ -x /usr/sbin/sshd ] && ! have sshd; then
-    fixmsg "Installing openssh-server"
-    ensure_sudo && run sudo apt-get install -y openssh-server
-  fi
-  if have systemctl; then
-    if ! systemctl is-active --quiet ssh && ! systemctl is-active --quiet sshd; then
-      fixmsg "Starting the SSH service"
-      ensure_sudo && { run sudo systemctl start ssh || run sudo systemctl start sshd; }
-    fi
-  fi
   mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
   if [ ! -f "$HOME/.ssh/id_rsa" ]; then
     fixmsg "Generating an SSH key"
-    run ssh-keygen -t rsa -P "" -f "$HOME/.ssh/id_rsa"
+    run ssh-keygen -q -t rsa -P "" -f "$HOME/.ssh/id_rsa"
   fi
   touch "$HOME/.ssh/authorized_keys"
   if ! grep -qsF "$(cut -d' ' -f2 "$HOME/.ssh/id_rsa.pub")" "$HOME/.ssh/authorized_keys"; then
@@ -196,12 +200,11 @@ ensure_ssh_localhost() {
     cat "$HOME/.ssh/id_rsa.pub" >> "$HOME/.ssh/authorized_keys"
   fi
   chmod 600 "$HOME/.ssh/authorized_keys"
-  ssh-keyscan -H localhost >> "$HOME/.ssh/known_hosts" 2>/dev/null
-  if run_t 15 ssh -o BatchMode=yes -o StrictHostKeyChecking=no localhost true; then
+  if _ssh_ok; then
     note_fix "Passwordless SSH to localhost configured"
     return 0
   fi
-  note_warn "SSH still fails. Daemons will be started directly (no SSH needed)."
+  info "SSH to localhost is not usable. The HDFS daemons will be started directly (same result as start-dfs.sh)."
   return 1
 }
 
@@ -218,10 +221,11 @@ hdfs_alive() {
     | grep -qE 'Live datanodes \([1-9]|Datanodes available: [1-9]'
 }
 _daemon() {   # _daemon start|stop namenode|datanode|...
+  # "detached": the daemon must survive the closing of the lab window
   if hadoop_major_ge3; then
-    run "$HADOOP_HOME/bin/hdfs" --daemon "$1" "$2"
+    run_as "hdfs --daemon $1 $2" detached "$HADOOP_HOME/bin/hdfs" --daemon "$1" "$2"
   else
-    run "$HADOOP_HOME/sbin/hadoop-daemon.sh" "$1" "$2"
+    run_as "hadoop-daemon.sh $1 $2" detached "$HADOOP_HOME/sbin/hadoop-daemon.sh" "$1" "$2"
   fi
 }
 namenode_needs_format() {
@@ -338,7 +342,14 @@ ensure_hdfs_running() {
   fi
   fixmsg "Starting HDFS"
   start_hdfs_daemons "$ssh_ok"
-  if ! wait_hdfs; then
+  local up=0
+  wait_hdfs && up=1
+  if [ "$up" = 0 ] && [ "$ssh_ok" = 1 ]; then
+    warn "start-dfs.sh did not bring HDFS up. Starting the daemons directly."
+    start_hdfs_daemons 0
+    wait_hdfs && up=1
+  fi
+  if [ "$up" = 0 ]; then
     if fix_datanode_clusterid; then
       start_hdfs_daemons 0
       wait_hdfs || die "HDFS did not come up after the DataNode reset. Check $HADOOP_HOME/logs"
@@ -387,11 +398,11 @@ ensure_yarn_running() {
   if _ssh_ok && [ -x "$HADOOP_HOME/sbin/start-yarn.sh" ]; then
     run "$HADOOP_HOME/sbin/start-yarn.sh" || true
   elif hadoop_major_ge3; then
-    hproc_running ResourceManager || run "$HADOOP_HOME/bin/yarn" --daemon start resourcemanager
-    hproc_running NodeManager || run "$HADOOP_HOME/bin/yarn" --daemon start nodemanager
+    hproc_running ResourceManager || run_as "yarn --daemon start resourcemanager" detached "$HADOOP_HOME/bin/yarn" --daemon start resourcemanager
+    hproc_running NodeManager || run_as "yarn --daemon start nodemanager" detached "$HADOOP_HOME/bin/yarn" --daemon start nodemanager
   else
-    run "$HADOOP_HOME/sbin/yarn-daemon.sh" start resourcemanager
-    run "$HADOOP_HOME/sbin/yarn-daemon.sh" start nodemanager
+    run_as "yarn-daemon.sh start resourcemanager" detached "$HADOOP_HOME/sbin/yarn-daemon.sh" start resourcemanager
+    run_as "yarn-daemon.sh start nodemanager" detached "$HADOOP_HOME/sbin/yarn-daemon.sh" start nodemanager
   fi
   info "Waiting for the ResourceManager and a registered NodeManager (up to ${SERVICE_TIMEOUT}s)..."
   local i=0

@@ -127,7 +127,8 @@ ensure_tool() {
 
 # ---- Java ------------------------------------------------------------------
 _java_major() {
-  local v; v=$("$1/bin/java" -version 2>&1 | head -n1 | grep -oE '"[^"]+"' | tr -d '"')
+  # not "head -n1": a JVM prints "Picked up _JAVA_OPTIONS/JAVA_TOOL_OPTIONS: ..." before the version line
+  local v; v=$("$1/bin/java" -version 2>&1 | grep -E 'version "' | head -n1 | grep -oE '"[^"]+"' | head -n1 | tr -d '"')
   case "$v" in
     1.*) echo "$v" | cut -d. -f2 ;;
     *)   echo "$v" | cut -d. -f1 ;;
@@ -259,7 +260,12 @@ scan_environment() {
   if [ -x "${DETECTED_JAVA_HOME:-}/bin/javac" ]; then
     ENV_JAVA=1
   else
-    h=$(list_javas | head -n1 | cut -f2)
+    local jl m; jl=$(list_javas); h=""
+    for m in 8 11 17 21; do
+      h=$(printf '%s\n' "$jl" | awk -F'\t' -v m="$m" '$1==m {print $2; exit}')
+      [ -n "$h" ] && break
+    done
+    [ -n "$h" ] || h=$(printf '%s\n' "$jl" | head -n1 | cut -f2)
     [ -n "$h" ] && { ENV_JAVA=1; save_detected DETECTED_JAVA_HOME "$h"; }
   fi
   have python3 && ENV_PYTHON=1

@@ -33,9 +33,10 @@ spawn_terminal() {
     tilix)            tilix --title="$title" -e "$cmdstr" ;;
     lxterminal)       lxterminal --title="$title" -e "$cmdstr" ;;
     terminator)       terminator --title="$title" -e "$cmdstr" ;;
-    xterm|uxterm|rxvt*|urxvt*) "$emu" -T "$title" -e bash "$@" ;;
+    xterm|uxterm)     "$emu" -fa Monospace -fs 11 -geometry 110x36 -T "$title" -e bash "$@" ;;
+    rxvt*|urxvt*)     "$emu" -T "$title" -e bash "$@" ;;
     *)                "$emu" -e bash "$@" ;;
   esac >/dev/null 2>&1 &
-  disown 2>/dev/null || true
+  SPAWN_PID=$!      # wait_for_lab uses it to notice an emulator that fails at once
   return 0
 }

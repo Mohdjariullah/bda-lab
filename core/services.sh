@@ -53,11 +53,20 @@ free_port() {
 bg_start() {
   local name=$1 log=$2; shift 2
   show "nohup $* > $log 2>&1 &"
-  _logline "$ nohup $* > $log 2>&1 &"
   nohup "$@" > "$log" 2>&1 &
   local pid=$!
   echo "$pid" > "$STATE_DIR/$name.pid"
   info "$name started (pid $pid), log: $log"
+}
+
+# _mongod_start_local : start mongod as the current user with its data in the
+# lab work directory. Needs no systemd and no root (WSL, containers, lab PCs).
+_mongod_start_local() {
+  local d="$LAB_WORKDIR_BASE/mongodata"; mkdir -p "$d"
+  fixmsg "Starting a local mongod (dbpath $d)"
+  # use a private socket dir: /tmp/mongodb-27017.sock may be owned by another user and block the start
+  run mongod --fork --dbpath "$d" --logpath "$d/mongod.log" --bind_ip 127.0.0.1 --port 27017 --unixSocketPrefix "$d" \
+    || { warn "mongod did not start. Last log lines:"; tail -n 8 "$d/mongod.log" 2>/dev/null | cut -c1-200; }
 }
 
 # ---- MongoDB ---------------------------------------------------------------
@@ -77,35 +86,28 @@ ensure_mongodb() {
   else
     fail "MongoDB server is not running"
     [ "$AUTO_START_SERVICES" = 1 ] || return 1
-    if have systemctl && systemctl list-unit-files 2>/dev/null | grep -qE '^mongod\.service'; then
-      fixmsg "Starting mongod through systemd"
-      ensure_sudo && run sudo systemctl start mongod
-    elif have systemctl && systemctl list-unit-files 2>/dev/null | grep -qE '^mongodb\.service'; then
-      fixmsg "Starting mongodb through systemd"
-      ensure_sudo && run sudo systemctl start mongodb
-    elif have mongod; then
-      local d="$LAB_WORK/mongodata"; mkdir -p "$d"
-      fixmsg "Starting a local mongod (dbpath $d)"
-      # use a private socket dir: /tmp/mongodb-27017.sock may be owned by another user and block the start
-      run mongod --fork --dbpath "$d" --logpath "$d/mongod.log" --bind_ip 127.0.0.1 --port 27017 --unixSocketPrefix "$d" \
-        || { warn "mongod did not start. Last log lines:"; tail -n 8 "$d/mongod.log" 2>/dev/null | cut -c1-200; }
-    else
-      fail "mongod is not installed"
-      fixmsg "Trying to install it with apt (mongodb-org from the MongoDB repository, or the distribution package)"
-      if ensure_sudo; then
-        if apt-cache policy mongodb-org 2>/dev/null | grep -q Candidate: && ! apt-cache policy mongodb-org 2>/dev/null | grep -q 'Candidate: (none)'; then
-          run sudo apt-get install -y mongodb-org && { run sudo systemctl start mongod || true; }
-        elif apt-cache policy mongodb 2>/dev/null | grep -q Candidate: && ! apt-cache policy mongodb 2>/dev/null | grep -q 'Candidate: (none)'; then
-          run sudo apt-get install -y mongodb && { run sudo systemctl start mongodb || true; }
-        else
-          fail "No MongoDB package is available from apt on this system"
-          info "Install MongoDB Community Server first: https://www.mongodb.com/docs/manual/administration/install-on-linux/"
-          info "Then run this lab again. The runner will detect the running server or start it."
-          return 1
-        fi
-      fi
+    # systemd only helps when it is really running (not in WSL without systemd, not in a container)
+    local unit=""
+    if have systemctl && [ -d /run/systemd/system ]; then
+      for unit in mongod mongodb ""; do
+        [ -n "$unit" ] || break
+        systemctl list-unit-files 2>/dev/null | grep -qE "^$unit\.service" && break
+      done
     fi
-    wait_for_port 27017 60 || die "MongoDB did not start. Check the mongod log."
+    if [ -z "$unit" ] && ! have mongod; then
+      fail "mongod is not installed"
+      note_fail "MongoDB is missing. Choose S (Setup) in the menu to install it, then run this lab again."
+      return 1
+    fi
+    if [ -n "$unit" ]; then
+      fixmsg "Starting $unit through systemd"
+      ensure_sudo && run sudo systemctl start "$unit"
+      wait_for_port 27017 20 || warn "The $unit service did not open port 27017"
+    fi
+    if ! port_in_use 27017 && have mongod; then
+      _mongod_start_local
+    fi
+    wait_for_port 27017 60 || die "MongoDB did not start. Check $LAB_WORKDIR_BASE/mongodata/mongod.log"
     note_fix "MongoDB server started"
   fi
 
@@ -131,7 +133,14 @@ kafka_topics_args() {
 _kafka_start_broker() {
   bg_start kafka "$LAB_WORK/kafka-server.log" "$KAFKA_HOME/bin/kafka-server-start.sh" "$KAFKA_CFG"
   info "Waiting for the broker on port $KAFKA_PORT (up to ${SERVICE_TIMEOUT}s)..."
-  wait_for_port "$KAFKA_PORT" "$SERVICE_TIMEOUT"
+  local pid i=0; pid=$(cat "$STATE_DIR/kafka.pid" 2>/dev/null)
+  while [ "$i" -lt "$SERVICE_TIMEOUT" ]; do
+    port_in_use "$KAFKA_PORT" && return 0
+    # the broker process is gone: it failed during start-up, no point in waiting longer
+    [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null && return 1
+    sleep 2; i=$((i + 2))
+  done
+  return 1
 }
 
 ensure_kafka() {
@@ -191,6 +200,17 @@ ensure_kafka() {
       fixmsg "Removing stale Kafka log directory $ld and retrying"
       run rm -rf "$ld"
       _kafka_start_broker || die "Kafka still not up. See $LAB_WORK/kafka-server.log"
+    elif grep -q "NodeExistsException" "$LAB_WORK/kafka-server.log" 2>/dev/null; then
+      # the last broker was killed (window closed, power off): ZooKeeper still holds
+      # its registration until the old session expires (18 s by default)
+      fail "Broker refused to start: ZooKeeper still holds the registration of the previous broker"
+      local try
+      for try in 1 2 3; do
+        note_fix "Waiting 20 s for ZooKeeper to drop the old registration, then starting the broker again ($try/3)"
+        sleep 20
+        _kafka_start_broker && break
+        [ "$try" = 3 ] && { warn "Last lines of the broker log:"; tail -n 15 "$LAB_WORK/kafka-server.log"; die "Kafka broker did not start"; }
+      done
     else
       warn "Last lines of the broker log:"; tail -n 15 "$LAB_WORK/kafka-server.log"
       die "Kafka broker did not start"

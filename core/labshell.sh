@@ -16,6 +16,8 @@ LAB_ID="${1:?usage: labshell.sh <lab-id>}"
 
 # raw lab window: commands, tool output and failures only (config: LAB_RAW_OUTPUT)
 RAW_OUTPUT="${LAB_RAW_OUTPUT:-1}"
+# Setup and Diagnostics are reports: every line matters, so they are never raw
+case "$LAB_ID" in setup|diag) RAW_OUTPUT=0 ;; esac
 export RAW_OUTPUT
 
 LAB_DIR="$(lab_dir_for "$LAB_ID")"
@@ -55,17 +57,21 @@ finish() {
   write_status "$LAB_RESULT"
   rm -f "$PID_FILE"
   if [ -z "${LAB_INLINE:-}" ] && [ -r /dev/tty ]; then
-    # raw mode: no text, but the window still waits so the output can be read
-    if [ "$RAW_OUTPUT" = 1 ]; then
+    # raw mode: no text after a successful lab, but the window still waits so
+    # the output can be read. A failed lab always says what to do next.
+    if [ "$RAW_OUTPUT" = 1 ] && [ "$LAB_RESULT" = OK ]; then
       read -r _ </dev/tty 2>/dev/null || true
     else
       echo
-      read -rp "Press ENTER to close this window..." _ </dev/tty 2>/dev/null || true
+      [ "$LAB_RESULT" = OK ] || echo "The lines marked [✗] above say what went wrong. The full log is in the file shown above."
+      # the prompt is printed with printf: "read -p" writes it to stderr, which is discarded here
+      printf 'Press ENTER to close this window... '
+      read -r _ </dev/tty 2>/dev/null || true
     fi
   fi
 }
 trap finish EXIT
-trap 'LAB_RESULT=FAIL; exit 130' INT TERM HUP
+trap 'LAB_RESULT=FAIL; note_fail "The lab was stopped before it finished (window closed or Ctrl+C)" 2>/dev/null; exit 130' INT TERM HUP
 
 banner "$(echo "$LAB_TITLE" | tr 'a-z' 'A-Z')"
 if [ "$RAW_OUTPUT" != 1 ]; then
