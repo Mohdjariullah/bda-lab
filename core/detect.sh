@@ -309,7 +309,7 @@ scan_environment() {
   if [ -n "${CFG_JAVA_HOME:-}" ] && [ -x "$CFG_JAVA_HOME/bin/javac" ]; then
     ENV_JAVA=1
   else
-    h=$(list_javas | awk -F'\t' '$1==8 {print $2; exit}')
+    h=$(list_javas | awk -F'\t' '$1==8 && !f {print $2; f=1}')
     [ -n "$h" ] && { ENV_JAVA=1; save_detected DETECTED_JAVA_HOME "$h"; }
   fi
   have python3 && ENV_PYTHON=1

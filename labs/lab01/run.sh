@@ -14,7 +14,10 @@ lab_main() {
   if ensure_java "8 11 17"; then note_ok "Java $JAVA_MAJOR at $JAVA_HOME"; else note_warn "No JDK found. Type S in the menu (Setup) to install Java 8."; fi
 
   step 4 "Single-node Hadoop"
-  if ensure_tool hadoop; then
+  locate_home hadoop
+  if [ -z "$LOCATED_HOME" ]; then
+    info "Hadoop is not set up on this PC yet (Lab 3 sets it up)"
+  elif ensure_tool hadoop; then
     build_hadoop_conf
     run_sh "$HADOOP_HOME/bin/hadoop version | head -n 3"
     note_ok "Hadoop found at $HADOOP_HOME"

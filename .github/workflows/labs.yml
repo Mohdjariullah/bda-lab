@@ -21,7 +21,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/bigdata_stack
-          key: bigdata-stack-${{ matrix.os }}-v1
+          key: bigdata-stack-${{ matrix.os }}-v2
 
       - name: What is on this machine
         run: |

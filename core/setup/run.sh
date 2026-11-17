@@ -49,15 +49,72 @@ PY
   fi
 }
 
+# _download_parts URL DEST : the same file over several connections at once.
+# archive.apache.org gives every connection only a few hundred kB/s, so one
+# connection needs 10 to 60 minutes for a tool. Six connections, each fetching
+# its own part of the file, are several times faster. Every part resumes where
+# it stopped. Returns 1 when this way is not possible (the caller then uses
+# the normal single download).
+: "${DOWNLOAD_PARTS:=6}"
+_download_parts() {
+  local url=$1 dest=$2 n=$DOWNLOAD_PARTS head len part i start end need have pids="" try got pct last=-1
+  have curl && [ "$n" -gt 1 ] || return 1
+  head=$(curl -sIL -m 30 "$url" 2>/dev/null | tr -d '\r')
+  printf '%s\n' "$head" | grep -qi '^accept-ranges: *bytes' || return 1
+  len=$(printf '%s\n' "$head" | awk 'tolower($1)=="content-length:" {l=$2} END {print l}' | tr -dc 0-9)
+  [ -n "$len" ] && [ "$len" -gt 30000000 ] || return 1
+  part=$(( (len + n - 1) / n ))
+  for i in $(seq 0 $((n - 1))); do
+    start=$((i * part)); end=$((start + part - 1)); [ "$end" -ge "$len" ] && end=$((len - 1))
+    need=$((end - start + 1))
+    (
+      for try in 1 2 3 4 5 6 7 8 9 10; do
+        have=$(stat -c %s "$dest.part$i" 2>/dev/null || echo 0)
+        [ "$have" -ge "$need" ] && exit 0
+        curl -fsL --connect-timeout 20 --speed-limit 2000 --speed-time 60 \
+             -r "$((start + have))-$end" "$url" >> "$dest.part$i" 2>/dev/null
+        sleep 2
+      done
+      have=$(stat -c %s "$dest.part$i" 2>/dev/null || echo 0)
+      [ "$have" -ge "$need" ]
+    ) &
+    pids="$pids $!"
+  done
+  # progress: one line every 10 %
+  while kill -0 $pids 2>/dev/null; do
+    got=0
+    for i in $(seq 0 $((n - 1))); do got=$((got + $(stat -c %s "$dest.part$i" 2>/dev/null || echo 0))); done
+    pct=$((got * 10 / len * 10))
+    [ "$pct" -gt "$last" ] && { echo "    $pct %  ($((got / 1048576)) of $((len / 1048576)) MB)"; last=$pct; }
+    sleep 3
+  done
+  local bad=0 p
+  for p in $pids; do wait "$p" || bad=1; done
+  if [ "$bad" = 0 ]; then
+    : > "$dest"
+    for i in $(seq 0 $((n - 1))); do cat "$dest.part$i" >> "$dest"; done
+    [ "$(stat -c %s "$dest")" = "$len" ] || bad=1
+  fi
+  if [ "$bad" = 0 ]; then
+    for i in $(seq 0 $((n - 1))); do rm -f "$dest.part$i"; done
+    return 0
+  fi
+  rm -f "$dest"       # the parts stay: the next attempt continues them
+  return 1
+}
+
 # _fetch_apache DEST REL : download REL from an Apache server
 _fetch_apache() {
-  local dest=$1 rel=$2 base
-  for base in https://dlcdn.apache.org https://archive.apache.org/dist; do
-    # dlcdn only keeps current releases: a 404 there is expected, so probe it quietly first
-    _url_ok "$base/$rel" 2>/dev/null || continue
-    _download "$base/$rel" "$dest" && return 0
-  done
-  return 1
+  local dest=$1 rel=$2
+  # dlcdn is the fast server, but it only keeps current releases: a 404 there
+  # is expected, so probe it quietly first
+  if _url_ok "https://dlcdn.apache.org/$rel" 2>/dev/null; then
+    _download "https://dlcdn.apache.org/$rel" "$dest" && return 0
+  fi
+  _url_ok "https://archive.apache.org/dist/$rel" 2>/dev/null || return 1
+  info "Not on the fast server any more, using the Apache archive (slower)"
+  _download_parts "https://archive.apache.org/dist/$rel" "$dest" && return 0
+  _download "https://archive.apache.org/dist/$rel" "$dest"
 }
 
 # _sha512_check FILE REL : 0 = matches, 1 = mismatch, 2 = no checksum published
@@ -99,7 +156,8 @@ _unpack() {
 
 # ---- Java 8 ----------------------------------------------------------------
 _jdk_majors() { JAVA_SEARCH=1 list_javas | cut -f1 | sort -un | tr '\n' ' '; }
-_jdk8_home()  { JAVA_SEARCH=1 list_javas | awk -F'\t' '$1==8 {print $2; exit}'; }
+# (no "exit" in awk: it would close the pipe while list_javas still writes)
+_jdk8_home()  { JAVA_SEARCH=1 list_javas | awk -F'\t' '$1==8 && !f {print $2; f=1}'; }
 
 _install_jdk8() {
   local arch dest file="$STACK_DIR/.downloads/jdk8.tar.gz"

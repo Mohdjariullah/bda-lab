@@ -46,7 +46,7 @@ export REAL_HOME="${REAL_HOME:-$HOME}"
 : "${HADOOP_VER:=3.3.6}"
 : "${PIG_VER:=0.17.0}"
 : "${HIVE_VER:=3.1.3}"
-: "${SPARK_VER:=3.5.3}"
+: "${SPARK_VER:=3.5.9}"
 : "${KAFKA_INSTALL_VER:=3.6.2}"
 : "${KAFKA_SCALA_VER:=2.13}"
 

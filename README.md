@@ -189,7 +189,7 @@ thing in the table it does this:
    ```
 
 4. Only when no copy works, it downloads its own into `~/bigdata_stack`
-   (Hadoop 3.3.6, Pig 0.17.0, Hive 3.1.3, Spark 3.5.3, Kafka 3.6.2, Java 8).
+   (Hadoop 3.3.6, Pig 0.17.0, Hive 3.1.3, Spark 3.5.9, Kafka 3.6.2, Java 8).
 
 When everything is fine the Setup window closes by itself and the lab window
 opens. If something could not be set up, the Setup window stays open and
@@ -789,8 +789,11 @@ LAB_RAW_OUTPUT=1          # 0 = lab window also shows [CHECK]/[STEP]/[FIX] lines
 
 ## Known limits
 
-- A tool that is missing or broken needs internet once. The Apache archive
-  server is sometimes slow (all five tools: 5 to 30 minutes).
+- A tool that is missing or broken needs internet once. Hadoop, Pig and
+  Spark come from Apache's fast server. Hive 3.1.3 and Kafka 3.6.2 are only
+  on the slow Apache archive; they are fetched over six connections at once
+  (`DOWNLOAD_PARTS`), which takes about 2 to 3 minutes each instead of 10 to
+  60.
 - Another program (not Hadoop, Kafka or ZooKeeper) on port 9000, 9092 or
   2181 is reported, not stopped.
 - Lab 9's program has the folder `/tmp/retail_stream_input` written in it.
@@ -799,6 +802,12 @@ LAB_RAW_OUTPUT=1          # 0 = lab window also shows [CHECK]/[STEP]/[FIX] lines
 - Single machine only.
 
 ## Tested
+
+- **Automatically on GitHub** (`.github/workflows/labs.yml`): every push runs
+  `./lab-runner --here all` on a fresh Ubuntu 22.04 and a fresh Ubuntu 24.04
+  machine, as a normal user. First run: 11 passed, 0 failed on both (Python
+  3.10 and 3.12, Java 8 already on the machine and reused, everything else
+  downloaded).
 
 - **One lab at a time on an empty PC**: Lab 8 downloaded only Java 8 and
   Spark, Lab 5 only Pig, Lab 10 only Kafka, Labs 1 and 6 nothing.
