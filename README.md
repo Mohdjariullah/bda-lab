@@ -18,8 +18,15 @@ Java, Hadoop, Hive, Pig, Spark or Kafka. The tool looks for them (first where
 the commands on `PATH`, then the disk), starts each one to test it, and uses
 the ones that work. Nothing is downloaded for those.
 
-**It downloads only what is missing or broken**, into `~/bigdata_stack`. No
-password is needed for that.
+**It sets up only what the lab you choose needs.** Lab 8 needs Java and
+Spark, so only those are tested or downloaded. Nothing else. If something is
+missing or broken it is downloaded into `~/bigdata_stack`. No password is
+needed for that.
+
+**The lab window is a plain terminal.** It shows your normal prompt, the
+commands as if you typed them, and their output. No headers, no "finished"
+message. At the end it is a normal terminal in the lab's folder and it stays
+open, also when you close the menu window.
 
 **A wrong configuration on the PC does not matter.** Errors like "version
 mismatch" or "environment is not configured" come from the settings around a
@@ -150,8 +157,20 @@ Press **Enter** to open the menu now.
 The first start checks which of its own tools are already installed. Then
 the menu opens (see Step 6).
 
-**Automatic setup.** The first start runs Setup without asking. For Java 8,
-Hadoop, Pig, Hive, Spark and Kafka it does this:
+**Setup happens when you choose a lab, and only for that lab.**
+
+| Lab | What it needs |
+|---|---|
+| 1, 2 | Python packages (numpy, pandas, matplotlib, seaborn) |
+| 3, 4a, 4b | Java 8, Hadoop |
+| 5 | Java 8, Pig |
+| 6 | nothing (MongoDB is on Windows) |
+| 7 | Java 8, Hadoop, Hive |
+| 8, 9 | Java 8, Spark |
+| 10 | Java 8, Kafka, kafka-python |
+
+The first time you choose a lab, a Setup window opens for a moment. For each
+thing in the table it does this:
 
 1. It looks for a copy that is already on the PC.
 2. It checks the version and **starts it once**. If it works, it is used:
@@ -169,19 +188,13 @@ Hadoop, Pig, Hive, Spark and Kafka it does this:
 4. Only when no copy works, it downloads its own into `~/bigdata_stack`
    (Hadoop 3.3.6, Pig 0.17.0, Hive 3.1.3, Spark 3.5.3, Kafka 3.6.2, Java 8).
 
-Then it installs the Python packages for labs 1, 2 and 10 for your user
-(numpy, pandas, matplotlib, seaborn, kafka-python).
+When everything is fine the Setup window closes by itself and the lab window
+opens. If something could not be set up, the Setup window stays open and
+shows which part and why. The next time you choose the same lab, no Setup
+window opens: the lab starts at once.
 
-Setup ends with a **SETUP SUMMARY**: one line per tool, `[✓]` or `[✗]`, with
-the folder that is used. If a line is `[✗]`, the lines above say why (for
-example no internet). Choose **S** again after you fix it.
-
-If a tool stops working later, the lab notices it, runs Setup again by
-itself, and then runs the lab again.
-
-To run Setup by hand, choose **S** in the menu or type `./lab-runner setup`.
-To never use the copies on the PC, set `REUSE_INSTALLED=0` in
-`config/environment.conf`.
+To set up the tools of **all** labs in one go (for example before class),
+choose **S** in the menu or type `./lab-runner setup`.
 
 ## 5. Start the tool next time
 
@@ -236,6 +249,7 @@ Select a Lab
    10. Lab 10 - Kafka Event Streaming
 
     A. Run All Labs
+    S. Set up everything now (the tools of all labs)
     D. System Diagnostics
     L. View a lab log
     R. Rescan environment
@@ -244,9 +258,9 @@ Select a Lab
 Enter choice:
 ```
 
-**Environment status:** `[✓]` means the tool found it. `[✗]` means the
-tool did not find it now. A `[✗]` is not always a problem: when you start a
-lab, the tool searches again and tries to fix it.
+**Environment status:** `[✓]` means it is set up. `[ ]` means it is not set
+up yet. That is not a problem and you do not have to do anything: a lab sets
+up what it needs the first time you choose it.
 
 **To run a lab:** type its number and press **Enter**.
 
@@ -256,6 +270,7 @@ lab, the tool searches again and tries to fix it.
 | `4a` or `4b` | Runs one part of Lab 4 |
 | `4` | Runs Lab 4a, then Lab 4b |
 | `A` | Runs all labs, one after the other, and shows a summary at the end |
+| `S` | Sets up the tools of all labs now (not needed for one lab) |
 | `D` | Checks the PC and shows a report. It changes nothing |
 | `L` | Shows the full log of a lab you ran before |
 | `R` | Scans the PC again (use it after you install or move a tool) |
@@ -267,10 +282,10 @@ window. The launcher window (the first one) shows short progress lines:
 ```
 ------------------------------------------------------------
 Lab 3  - Basic HDFS Commands
-[→] Opened a new terminal window for the lab. Watch the commands there.
+[→] Opened a new terminal window. Watch the commands there.
     Progress:
     [✓] Java 8: /usr/lib/jvm/java-8-openjdk-amd64
-    [✓] hadoop: /home/cse/Desktop/hadoop-3.4.0
+    [✓] hadoop: /usr/local/hadoop  (already on this PC, tested)
     [FIX] HDFS started (NameNode + DataNode running)
     [✓] HDFS read, write, copy and directory operations completed
     [✓] Lab 3 done
@@ -281,50 +296,36 @@ Press ENTER to return to the Lab Runner...
 
 ## 7. What you see in the lab window
 
-The lab window shows every command before it runs, then the output of the
-command. It is the same thing you would type by hand, so you can learn the
-steps and write them in your record.
-
-**How to read the lines:**
-
-| Line starts with | Meaning |
-|---|---|
-| `$ command` | The command that runs now (this is what you would type) |
-| `[CHECK]` | The tool checks one thing (for example, Java) |
-| `[STEP 3]` | Step 3 of the lab manual |
-| `[✓]` (green) | This part is correct |
-| `[✗]` (red) | This part failed. Read the next lines: a fix usually follows |
-| `[FIX]` (cyan) | The tool changed something to repair the problem |
-| `[!]` (yellow) | A warning. The lab continues |
-| `[→]` (blue) | Information |
-
-**Example:** `JAVA_HOME` is wrong on the PC. You see this:
+The lab window looks like a terminal in which you typed every command
+yourself. There is your normal prompt, then the command, then what the
+command printed. Nothing else: no headers, no check marks, no messages from
+the tool.
 
 ```
-[CHECK] Java (preferred versions: 8 11 17)
-
-$ java -version
-bash: java: command not found
-
-[!] Multiple JDKs found:
-      Java 8   /usr/lib/jvm/java-8-openjdk-amd64
-      Java 17  /usr/lib/jvm/java-17-openjdk-amd64
-[FIX] export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64  (preferred Java 8)
-[FIX] export PATH=$JAVA_HOME/bin:$PATH
-[→] Re-running:
-
-$ java -version
+student@lab-pc:~$ export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
+student@lab-pc:~$ export PATH=$JAVA_HOME/bin:$PATH
+student@lab-pc:~$ java -version
 openjdk version "1.8.0_462"
-[✓] Java 8: /usr/lib/jvm/java-8-openjdk-amd64
+student@lab-pc:~$ export SPARK_HOME=/opt/spark
+student@lab-pc:~$ export PATH=$SPARK_HOME/bin:$PATH
+student@lab-pc:~$ spark-submit --version
+...
+student@lab-pc:~$ cd /home/student/bigdata_labs/lab08
+student@lab-pc:~/bigdata_labs/lab08$ cat spark_lab.py
+...
+student@lab-pc:~/bigdata_labs/lab08$ spark-submit spark_lab.py
+Sum of Evens in 1 Million Integers: 249999500000
+...
+student@lab-pc:~/bigdata_labs/lab08$ 
 ```
 
-1. The tool runs the command the normal way. It fails.
-2. It shows the error.
-3. It shows the fix (the `export` lines). You can copy these lines to use them by hand.
-4. It runs the command again. Now it works.
+These are the real commands, in the right order. You can copy them into your
+record or type them yourself in another terminal.
 
-Do not close the lab window while the lab runs. If you close it, the lab stops
-and the launcher shows `The lab window closed before the lab finished`.
+The check marks and the "done" message are only in the **launcher** window.
+The full story with every check is in the log file (`logs/lab08.log`). If you
+want those lines in the lab window too, set `LAB_RAW_OUTPUT=0` in
+`config/environment.conf`.
 
 ## 8. When it asks for your password
 
@@ -350,13 +351,14 @@ stops and says so. Restart the PC and run the lab again.
 
 ## 9. When the lab is finished
 
-The lab window is plain. It shows only the commands that were run
-(`$ command`), what they printed, and errors (`[✗]`). There is no header and
-no "completed" message, so the window simply stops printing.
+The lab window does not say "finished". After the last output you see your
+prompt again, and the window is now a normal terminal:
 
-If the lab has its own window, it stays open until you press **Enter**
-(nothing is printed while it waits), so you can read the output. When a lab
-fails, the window says `Press ENTER to close this window...`.
+- it is in the lab's folder (`~/bigdata_labs/lab08`),
+- the lab's settings are active, so you can type more commands, for example
+  `hdfs dfs -ls /` after Lab 3 or `spark-submit spark_lab.py` again,
+- it **stays open** until you close it yourself. You can close the launcher
+  (menu) window; the lab window is not affected.
 
 The **launcher** window tells you the result:
 
@@ -369,33 +371,15 @@ or, when something failed:
 ```
 [✗] Lab 5 failed  (12s)
     What went wrong:
-      - Pig is not installed. Searched: /home/student /home /opt ...
+      - pig does not start (/opt/pig-0.17.0)
     Full log: /home/student/bda-lab/logs/lab05_20260101_101500.log
 ```
 
-The lines under `What went wrong` are the errors of that lab. You do not
-need to open the log to see them.
-
-The full story (every check, fix and step) is always saved in the log file
-`logs/lab05.log`. To see the extra lines in the lab window too, set
-`LAB_RAW_OUTPUT=0` in `config/environment.conf`.
+In the lab window a failure looks like it does in a real terminal: the
+command and the error it printed. The reason in plain words is in the
+launcher, under `What went wrong`.
 
 Press **Enter** in the launcher to go back to the menu.
-
-**Where to find your work:**
-
-| What | Where |
-|---|---|
-| The output of each lab (to show your teacher or copy to your record) | `bda-lab/results/<lab>/` |
-| The source files, compiled classes and jars | `~/bigdata_labs/<lab>/` |
-| The full log of each run (every command and every output) | `bda-lab/logs/` (press `L` in the menu) |
-| Files in HDFS | The paths from the manual, for example `/user/hadoop/lab_data` |
-
-To open the results folder, type in a terminal:
-
-```bash
-xdg-open ~/bda-lab/results
-```
 
 ## 10. What each lab does and the output you must see
 
@@ -573,7 +557,7 @@ the tool finds on your PC. It changes nothing.
 | The PC already has another Hadoop / Kafka and it gives errors | Nothing to do. Setup tests it. If it does not work, the tool downloads its own copy |
 | The lab window asks for a password | Another user's Hadoop or Kafka blocks the lab. Type your Linux password (see section 8) |
 | `Hadoop daemons of another user are still running` | The password was not accepted. Restart the PC and run the lab again |
-| The menu shows `[!] Not installed: ...` | Type `S` in the menu (Setup). Read the SETUP SUMMARY at the end |
+| The menu shows `[ ]` next to a tool | Nothing to do. It is set up when you choose a lab that needs it |
 | Setup stops at a download | Check the internet and type `S` again. The download continues from where it stopped |
 | You want the lab in the same window (no second window) | Type `./lab-runner --here 5`, or set `LAB_NEW_WINDOW=0` in `config/environment.conf` |
 | `Could not install numpy` (or another Python package) | Check the internet. Then run the lab again |
@@ -631,7 +615,7 @@ cd ~/bda-lab              # go to the tool folder
 ./lab-runner 5            # run Lab 5 directly
 ./lab-runner 4            # run Lab 4a, then Lab 4b
 ./lab-runner all          # run all labs, summary saved in results/last_run_summary.txt
-./lab-runner setup        # install what is missing
+./lab-runner setup        # set up the tools of ALL labs now (one lab does this for itself)
 ./lab-runner --here 5     # run Lab 5 in this window (no second window)
 ./lab-runner diag         # check the PC only (changes nothing)
 ./lab-runner --help       # show these options
@@ -653,7 +637,16 @@ This part explains how the tool works inside. You do not need it to run the labs
 - **Lab window** (`core/labshell.sh <id>`): loads the core libraries, runs
   `labs/<lab>/run.sh` (which defines `lab_main`), writes progress and a final
   `OK`/`FAIL`, and keeps a full log in `logs/lab<ID>_<ts>.log`
-  (`logs/lab<ID>.log` links to the latest).
+  (`logs/lab<ID>.log` links to the latest). It prints only command lines
+  (with the user's real prompt, read from an interactive bash and expanded
+  with `${PS1@P}`) and the commands' own output. When the lab is over it
+  becomes an interactive shell (`exec bash --rcfile state/lab<ID>.bashrc`)
+  that reads `~/.bashrc` and then sets the lab's environment again. The
+  window is started in its own session, so closing the launcher does not
+  close it.
+- **Per-lab setup**: `lab_needs` in `core/common.sh` lists what each lab
+  needs. Before a lab runs, the launcher checks only those parts and, if one
+  is missing, runs Setup for those parts only.
 
 Supported terminal emulators: gnome-terminal, xfce4-terminal, konsole,
 mate-terminal, tilix, lxterminal, terminator, xterm, and
@@ -773,6 +766,12 @@ LAB_RAW_OUTPUT=1          # 0 = lab window also shows [CHECK]/[STEP]/[FIX] lines
 - Single machine only.
 
 ## Tested
+
+- **One lab at a time on an empty PC**: Lab 8 downloaded only Java 8 and
+  Spark, Lab 5 only Pig, Lab 10 only Kafka, Labs 1 and 6 nothing.
+- **Lab window**: in gnome-terminal the window showed only the prompt, the
+  commands and their output, ended as a working shell with the lab's
+  settings, and stayed open after the launcher was closed.
 
 Ubuntu 24.04 (x86_64), no systemd, no SSH server.
 

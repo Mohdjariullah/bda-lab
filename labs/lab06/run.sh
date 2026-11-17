@@ -11,7 +11,5 @@ lab_main() {
 
   run cat lab6_mongodb.js
 
-  echo
-  echo "# Run these statements in MongoDB on Windows (mongosh or the MongoDB Compass shell)."
   note_ok "MongoDB script shown (it is run in MongoDB on Windows). Copy: $LAB_RESULTS/lab6_mongodb.js"
 }

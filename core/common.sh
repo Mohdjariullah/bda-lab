@@ -101,6 +101,22 @@ lab_dir_for() {
     *)   echo "$LABS_DIR/lab$1" ;;
   esac
 }
+# lab_needs ID : what a lab needs on the PC. Only this is tested / installed
+# when the lab is chosen (a student usually runs one program, not all of them).
+#   java hadoop pig hive spark kafka = tools, py = numpy/pandas/matplotlib/seaborn,
+#   pykafka = kafka-python
+lab_needs() {
+  case "$1" in
+    01|02)       echo "py" ;;
+    03|04a|04b)  echo "java hadoop" ;;
+    05)          echo "java pig" ;;
+    06)          echo "" ;;
+    07)          echo "java hadoop hive" ;;
+    08|09)       echo "java spark" ;;
+    10)          echo "java kafka pykafka" ;;
+    *)           echo "java hadoop pig hive spark kafka py pykafka" ;;
+  esac
+}
 lab_short_name() {   # "Lab 5" from "05", "Lab 4a" from "04a"
   lab_title_for "$1" | sed -E 's/ +- .*//'
 }
@@ -112,6 +128,9 @@ if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
 else
   C_RESET=""; C_BOLD=""; C_DIM=""; C_RED=""; C_GREEN=""; C_YELLOW=""; C_BLUE=""; C_CYAN=""
 fi
+# the colours of the normal Ubuntu prompt (user@host green, folder blue)
+if [ -n "$C_RESET" ]; then P_USER=$'\e[01;32m'; P_PATH=$'\e[01;34m'; else P_USER=""; P_PATH=""; fi
+HOST_SHORT=$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo localhost)
 LINE="============================================================"
 LINE2="------------------------------------------------------------"
 
@@ -122,13 +141,44 @@ LINE2="------------------------------------------------------------"
 hr()      { [ "${RAW_OUTPUT:-0}" = 1 ] || echo "$LINE"; }
 banner()  { [ "${RAW_OUTPUT:-0}" = 1 ] || { echo; echo "$LINE"; printf ' %s\n' "$@"; echo "$LINE"; }; _logline ""; _logline "$LINE"; _logline " $*"; _logline "$LINE"; }
 ok()      { [ "${RAW_OUTPUT:-0}" = 1 ] || echo "${C_GREEN}[✓]${C_RESET} $*";   _logline "[OK] $*"; }
-fail()    { echo "${C_RED}[✗]${C_RESET} $*";     _logline "[FAIL] $*"; }
+fail()    { [ "${RAW_OUTPUT:-0}" = 1 ] || echo "${C_RED}[✗]${C_RESET} $*";     _logline "[FAIL] $*"; }
 warn()    { [ "${RAW_OUTPUT:-0}" = 1 ] || echo "${C_YELLOW}[!]${C_RESET} $*";  _logline "[WARN] $*"; }
 info()    { [ "${RAW_OUTPUT:-0}" = 1 ] || echo "${C_BLUE}[→]${C_RESET} $*";    _logline "[INFO] $*"; }
 fixmsg()  { [ "${RAW_OUTPUT:-0}" = 1 ] || echo "${C_CYAN}[FIX]${C_RESET} $*";  _logline "[FIX] $*"; }
 check()   { [ "${RAW_OUTPUT:-0}" = 1 ] || { echo; echo "${C_BOLD}[CHECK]${C_RESET} $*"; }; _logline ""; _logline "[CHECK] $*"; }
 step()    { [ "${RAW_OUTPUT:-0}" = 1 ] || { echo; echo "${C_BOLD}[STEP $1] $2${C_RESET}"; }; _logline ""; _logline "[STEP $1] $2"; }
-show()    { printf '\n%s$ %s%s\n' "$C_BOLD" "$*" "$C_RESET"; _logline ""; _logline "$ $*"; }
+# _echo_cmd TEXT : print a command the way the terminal shows a typed command.
+# Raw lab window: exactly the normal prompt, "user@host:~/folder$ command".
+_echo_cmd() {
+  local s="$*" v
+  # tools are on PATH, so the command is shown the way it is typed: without the folder
+  for v in JAVA_HOME HADOOP_HOME PIG_HOME HIVE_HOME SPARK_HOME KAFKA_HOME; do
+    [ -n "${!v:-}" ] && { s=${s//"${!v}/bin/"/}; s=${s//"${!v}/sbin/"/}; }
+  done
+  if [ "${RAW_OUTPUT:-0}" = 1 ]; then
+    printf '%s%s\n' "$(_lab_prompt)" "$s"
+  else
+    printf '\n%s$ %s%s\n' "$C_BOLD" "$s" "$C_RESET"
+  fi
+  _logline ""; _logline "$ $s"
+}
+show()    { _echo_cmd "$*"; }
+# _lab_prompt : the prompt of THIS user's terminal, for the folder we are in now.
+# LAB_PS1 is the user's real PS1 (read from an interactive bash by labshell.sh),
+# so the lines look exactly like the ones the terminal prints: same text, same
+# colours, "#" for root. Without it: the standard Ubuntu prompt.
+_lab_prompt() {
+  local p=""
+  if [ -n "${LAB_PS1:-}" ]; then
+    p=$( { printf '%s' "${LAB_PS1@P}"; } 2>/dev/null )
+    p=${p//$'\001'/}; p=${p//$'\002'/}
+  fi
+  if [ -z "$p" ]; then
+    local c='$'; [ "$(id -u)" -eq 0 ] && c='#'
+    p="${P_USER}$(id -un)@${HOST_SHORT}${C_RESET}:${P_PATH}${PWD/#$HOME/\~}${C_RESET}${c} "
+  fi
+  printf '%s' "$p"
+}
 
 # progress lines are read by the launcher window
 progress()  { [ -n "${PROGRESS_FILE:-}" ] && printf '%s\n' "$*" >> "$PROGRESS_FILE"; return 0; }
@@ -148,24 +198,20 @@ _cmd_label() {
   printf '%s' "$*" | sed -E 's/^timeout --foreground -k [0-9]+ [0-9]+ //; s/^env ([A-Za-z_]+=[^ ]* )+//'
 }
 run() {
-  local label; label=$(_cmd_label "$@")
-  printf '\n%s$ %s%s\n' "$C_BOLD" "$label" "$C_RESET"
-  _logline "" ; _logline "$ $label"
+  _echo_cmd "$(_cmd_label "$@")"
   "$@" 2>&1 | tee -a "${LAB_LOG:-/dev/null}"
   return "${PIPESTATUS[0]}"
 }
 # run_as "label shown" CMD ARGS... : same as run, but displays a shorter label
 run_as() {
   local label=$1; shift
-  printf '\n%s$ %s%s\n' "$C_BOLD" "$label" "$C_RESET"
-  _logline "" ; _logline "$ $label"
+  _echo_cmd "$label"
   "$@" 2>&1 | tee -a "${LAB_LOG:-/dev/null}"
   return "${PIPESTATUS[0]}"
 }
 # run_sh "shell string" : for pipes and redirections
 run_sh() {
-  printf '\n%s$ %s%s\n' "$C_BOLD" "$1" "$C_RESET"
-  _logline "" ; _logline "$ $1"
+  _echo_cmd "$1"
   bash -c "$1" 2>&1 | tee -a "${LAB_LOG:-/dev/null}"
   return "${PIPESTATUS[0]}"
 }
@@ -175,9 +221,7 @@ run_t() { local t=$1; shift; run timeout --foreground -k 5 "$t" "$@"; }
 # function FILTERFN before it is shown and logged. Exit code is the command's.
 run_pipe() {
   local filt=$1; shift
-  local label; label=$(_cmd_label "$@")
-  printf '\n%s$ %s%s\n' "$C_BOLD" "$label" "$C_RESET"
-  _logline "" ; _logline "$ $label"
+  _echo_cmd "$(_cmd_label "$@")"
   "$@" 2>&1 | "$filt" | tee -a "${LAB_LOG:-/dev/null}"
   return "${PIPESTATUS[0]}"
 }

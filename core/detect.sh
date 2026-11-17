@@ -146,6 +146,9 @@ ensure_tool() {
     printf '%s\n' "$LOCATE_CANDIDATES" | sed 's/^/      /'
     fixmsg "Using the highest version: $home"
   fi
+  # the two lines a student types to use this installation
+  show "export $T_VAR=$home"
+  show "export PATH=\$$T_VAR/bin:\$PATH"
   export "$T_VAR=$home"
   path_prepend "$home/bin"
   [ -d "$home/sbin" ] && path_prepend "$home/sbin"
@@ -221,10 +224,18 @@ ensure_java() {
       chosen=$(printf '%s\n' "$list" | sort -n | head -n1 | cut -f2); src="only JDK available"
     fi
   fi
+  if [ "${JAVA_ENSURED:-}" = "$chosen" ]; then
+    # already set and shown in this lab window
+    export JAVA_HOME=$chosen; path_prepend "$JAVA_HOME/bin"
+    return 0
+  fi
+  show "export JAVA_HOME=$chosen"
+  show 'export PATH=$JAVA_HOME/bin:$PATH'
   export JAVA_HOME=$chosen
   path_prepend "$JAVA_HOME/bin"
   save_detected DETECTED_JAVA_HOME "$chosen"
   JAVA_MAJOR=$(_java_major "$JAVA_HOME")
+  JAVA_ENSURED=$chosen
   run java -version  || { note_fail "java does not start ($JAVA_HOME)"; return 1; }
   run javac -version || { note_fail "javac does not start ($JAVA_HOME)"; return 1; }
   note_ok "Java $JAVA_MAJOR: $JAVA_HOME"
@@ -251,13 +262,13 @@ ensure_python() {
     fi
     rm -f "$gp"
   fi
-  run python3 -m pip --version || warn "pip is not available: missing Python packages cannot be installed"
+  python3 -m pip --version >> "${LAB_LOG:-/dev/null}" 2>&1 || warn "pip is not available: missing Python packages cannot be installed"
   note_ok "Python $(python3 --version 2>&1 | awk '{print $2}')"
 }
 
 # fetch_url URL DEST : download with whatever this PC has (curl, wget or python3). No resume.
 fetch_url() {
-  if have curl; then curl -fsSL --retry 3 --connect-timeout 20 -o "$2" "$1"
+  if have curl; then curl -fsSL --retry 3 --connect-timeout 20 --max-time 120 -o "$2" "$1"
   elif have wget; then wget -q --tries=3 --timeout=30 -O "$2" "$1"
   else python3 - "$1" "$2" <<'PY'
 import sys, urllib.request
@@ -273,15 +284,15 @@ ensure_pymods() {
     IFS=: read -r mod pip apt <<< "$spec"
     pip=${pip:-$mod}
     check "Python module: $mod"
-    if run python3 -c "import $mod; print('$mod', getattr($mod, '__version__', 'ok'))"; then
+    if python3 -c "import $mod" >> "${LAB_LOG:-/dev/null}" 2>&1; then
       ok "$mod available"; continue
     fi
     warn "Missing package: $mod"
     if [ "$AUTO_INSTALL_PY" != 1 ]; then missing=1; continue; fi
     fixmsg "Installing $pip"
-    run python3 -m pip install --user "$pip" \
-      || run python3 -m pip install --user --break-system-packages "$pip"
-    if run python3 -c "import $mod"; then
+    run_as "pip3 install --user $pip" python3 -m pip install --user "$pip" \
+      || run_as "pip3 install --user --break-system-packages $pip" python3 -m pip install --user --break-system-packages "$pip"
+    if python3 -c "import $mod" >> "${LAB_LOG:-/dev/null}" 2>&1; then
       note_fix "Installed $mod"
     else
       note_fail "Could not install $mod"; missing=1

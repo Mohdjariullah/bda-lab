@@ -269,14 +269,22 @@ _setup_tool() {
   note_ok "$name installed: $own"
 }
 
+# _want NAME : is this part of what Setup was asked to do? (SETUP_ONLY, default everything)
+_want() { case " ${SETUP_ONLY:-java hadoop pig hive spark kafka py pykafka} " in *" $1 "*) return 0 ;; esac; return 1; }
+
 # _setup_summary : one line per component, so the result can be read at a glance.
 _setup_summary() {
   local t bad=0
   echo; echo "$LINE2"; echo " SETUP SUMMARY"; echo "$LINE2"
   _logline ""; _logline " SETUP SUMMARY"
-  if [ -n "$SETUP_JAVA_HOME" ]; then note_ok "Java 8    $SETUP_JAVA_HOME"; else note_fail "Java      no working JDK 8 (needed by labs 3 to 10)"; bad=1; fi
-  if have python3; then note_ok "Python    $(python3 --version 2>&1 | awk '{print $2}')"; else note_fail "Python    python3 not found (labs 1, 2, 8, 9, 10)"; bad=1; fi
+  if _want java; then
+    if [ -n "$SETUP_JAVA_HOME" ]; then note_ok "Java 8    $SETUP_JAVA_HOME"; else note_fail "Java 8    no working JDK 8"; bad=1; fi
+  fi
+  if _want py || _want pykafka; then
+    if have python3; then note_ok "Python    $(python3 --version 2>&1 | awk '{print $2}')"; else note_fail "Python    python3 not found"; bad=1; fi
+  fi
   for t in hadoop pig hive spark kafka; do
+    _want "$t" || continue
     locate_home "$t"
     if [ -n "$LOCATED_HOME" ] && [ "${SETUP_BAD[$t]:-0}" = 0 ]; then note_ok "$(printf '%-9s' "$t") $LOCATED_HOME  ($LOCATE_SOURCE)"
     else note_fail "$(printf '%-9s' "$t") not working"; bad=1; fi
@@ -288,39 +296,51 @@ _setup_summary() {
 lab_main() {
   local t failed=0
   declare -gA SETUP_BAD=()
-  SETUP_JAVA_HOME=""
+  SETUP_JAVA_HOME=""; SETUP_HADOOP_HOME=""
+  [ -n "${SETUP_ONLY:-}" ] && info "Only what this lab needs is set up: $SETUP_ONLY"
 
-  step 1 "Java 8"
-  SETUP_JAVA_HOME=$(_jdk8_home)
-  if [ -n "$SETUP_JAVA_HOME" ]; then
-    note_ok "Java 8 is already on this PC and works: $SETUP_JAVA_HOME. Nothing to download."
-  else
-    info "No working JDK 8 on this PC (found: $(_jdk_majors))"
-    _install_jdk8 || failed=1
+  if _want java; then
+    step 1 "Java 8"
     SETUP_JAVA_HOME=$(_jdk8_home)
+    if [ -n "$SETUP_JAVA_HOME" ]; then
+      note_ok "Java 8 is already on this PC and works: $SETUP_JAVA_HOME. Nothing to download."
+    else
+      info "No working JDK 8 on this PC (found: $(_jdk_majors))"
+      _install_jdk8 || failed=1
+      SETUP_JAVA_HOME=$(_jdk8_home)
+    fi
+    [ -n "$SETUP_JAVA_HOME" ] && save_detected DETECTED_JAVA_HOME "$SETUP_JAVA_HOME"
   fi
-  [ -n "$SETUP_JAVA_HOME" ] && save_detected DETECTED_JAVA_HOME "$SETUP_JAVA_HOME"
 
-  step 2 "Hadoop, Pig, Hive, Spark, Kafka"
-  SETUP_HADOOP_HOME=""
-  for t in hadoop pig hive spark kafka; do
-    _setup_tool "$t" || { SETUP_BAD[$t]=1; failed=1; }
-    if [ "$t" = hadoop ]; then locate_home hadoop; SETUP_HADOOP_HOME=$LOCATED_HOME; fi
-  done
-  rm -rf "$STACK_DIR/.downloads" 2>/dev/null
+  if _want hadoop || _want pig || _want hive || _want spark || _want kafka; then
+    step 2 "Tools"
+    locate_home hadoop; SETUP_HADOOP_HOME=$LOCATED_HOME
+    for t in hadoop pig hive spark kafka; do
+      _want "$t" || continue
+      _setup_tool "$t" || { SETUP_BAD[$t]=1; failed=1; }
+      if [ "$t" = hadoop ]; then locate_home hadoop; SETUP_HADOOP_HOME=$LOCATED_HOME; fi
+    done
+    rm -rf "$STACK_DIR/.downloads" 2>/dev/null
+  fi
 
-  step 3 "Python packages for labs 1, 2 and 10"
-  if ensure_python; then
-    ensure_pymods numpy pandas matplotlib seaborn \
-      || { note_fail "Some Python packages for labs 1 and 2 could not be installed"; failed=1; }
-    ensure_pymods kafka:kafka-python || ensure_pymods kafka:kafka-python-ng \
-      || { note_fail "kafka-python (Lab 10) could not be installed"; failed=1; }
-  else
-    failed=1
+  if _want py || _want pykafka; then
+    step 3 "Python packages"
+    if ensure_python; then
+      if _want py; then
+        ensure_pymods numpy pandas matplotlib seaborn \
+          || { note_fail "Some Python packages for labs 1 and 2 could not be installed"; failed=1; }
+      fi
+      if _want pykafka; then
+        ensure_pymods kafka:kafka-python || ensure_pymods kafka:kafka-python-ng \
+          || { note_fail "kafka-python (Lab 10) could not be installed"; failed=1; }
+      fi
+    else
+      failed=1
+    fi
   fi
 
   _setup_summary || failed=1
-  [ "$failed" = 0 ] || { note_fail "Some parts could not be installed. The lines marked [✗] say which and why. Run Setup again after that is fixed: what already works is kept."; return 1; }
-  note_ok "All lab software is installed and starts correctly."
+  [ "$failed" = 0 ] || { note_fail "Some parts could not be set up. The lines marked [✗] say which and why. Run it again after that is fixed: what already works is kept."; return 1; }
+  note_ok "Ready."
   return 0
 }

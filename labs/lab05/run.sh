@@ -50,12 +50,14 @@ _run_pig_local() {
 
 lab_main() {
   ensure_java "8 11 17" || die "No JDK available"
+  # Pig brings its own Hadoop libraries for local mode. A Hadoop that is already
+  # set up on this PC is used; none is installed just for this lab.
   local have_hadoop=0
-  if ensure_tool hadoop; then
+  locate_home hadoop
+  if [ -n "$LOCATED_HOME" ] && ensure_tool hadoop; then
     have_hadoop=1
-    build_hadoop_conf
   else
-    warn "Hadoop not found. Pig will use its bundled Hadoop libraries (local mode only)."
+    info "No Hadoop set up on this PC: Pig uses its bundled Hadoop libraries (local mode)"
   fi
   ensure_tool pig || die "Pig is not available"
   export PIG_HOME
@@ -76,11 +78,14 @@ lab_main() {
   step 3 "Compile the UDF and build CleanDataUDF.jar"
   UDF_CP="$pigjar"
   [ "$have_hadoop" = 1 ] && UDF_CP="$UDF_CP:$(hadoop_classpath)"
-  UDF_CP="$UDF_CP:$(ls "$PIG_HOME"/lib/*.jar "$PIG_HOME"/lib/h2/*.jar "$PIG_HOME"/lib/h3/*.jar 2>/dev/null | paste -sd: -)"
+  # lib/hadoop2-runtime: the Hadoop classes Pig ships for local mode (used when the PC has no Hadoop)
+  UDF_CP="$UDF_CP:$(ls "$PIG_HOME"/lib/*.jar "$PIG_HOME"/lib/h2/*.jar "$PIG_HOME"/lib/h3/*.jar "$PIG_HOME"/lib/hadoop2-runtime/*.jar 2>/dev/null | paste -sd: -)"
+  local cplabel="$(basename "$pigjar"):\$(hadoop classpath)"
+  [ "$have_hadoop" = 1 ] || cplabel="\$PIG_HOME/$(basename "$pigjar"):\$PIG_HOME/lib/hadoop2-runtime/*"
   mkdir -p classes
   local n=0
   while :; do
-    if run_as "javac -classpath $(basename "$pigjar"):\$(hadoop classpath) -d classes src/CleanDataUDF.java" \
+    if run_as "javac -classpath \"$cplabel\" -d classes src/CleanDataUDF.java" \
          javac -classpath "$UDF_CP" -d classes src/CleanDataUDF.java; then break; fi
     n=$((n + 1)); [ "$n" -gt "$MAX_FIX_ATTEMPTS" ] && die "UDF compilation failed"
     _fix_udf_classpath || die "UDF compilation failed"

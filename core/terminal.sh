@@ -25,17 +25,19 @@ spawn_terminal() {
   fi
   local cmdstr
   cmdstr=$(printf '%q ' bash "$@")
+  # own session: the lab window must stay open when the launcher window is closed
+  local det=""; have setsid && det=setsid
   case "$emu" in
-    gnome-terminal*)  gnome-terminal --title="$title" -- bash "$@" ;;
-    mate-terminal)    mate-terminal --title="$title" -x bash "$@" ;;
-    xfce4-terminal*)  xfce4-terminal --title="$title" -x bash "$@" ;;
-    konsole)          konsole --title "$title" -e bash "$@" ;;
-    tilix)            tilix --title="$title" -e "$cmdstr" ;;
-    lxterminal)       lxterminal --title="$title" -e "$cmdstr" ;;
-    terminator)       terminator --title="$title" -e "$cmdstr" ;;
-    xterm|uxterm)     "$emu" -fa Monospace -fs 11 -geometry 110x36 -T "$title" -e bash "$@" ;;
-    rxvt*|urxvt*)     "$emu" -T "$title" -e bash "$@" ;;
-    *)                "$emu" -e bash "$@" ;;
+    gnome-terminal*)  $det gnome-terminal --title="$title" -- bash "$@" ;;
+    mate-terminal)    $det mate-terminal --title="$title" -x bash "$@" ;;
+    xfce4-terminal*)  $det xfce4-terminal --title="$title" -x bash "$@" ;;
+    konsole)          $det konsole --title "$title" -e bash "$@" ;;
+    tilix)            $det tilix --title="$title" -e "$cmdstr" ;;
+    lxterminal)       $det lxterminal --title="$title" -e "$cmdstr" ;;
+    terminator)       $det terminator --title="$title" -e "$cmdstr" ;;
+    xterm|uxterm)     $det "$emu" -fa Monospace -fs 11 -geometry 110x36 -T "$title" -e bash "$@" ;;
+    rxvt*|urxvt*)     $det "$emu" -T "$title" -e bash "$@" ;;
+    *)                $det "$emu" -e bash "$@" ;;
   esac >/dev/null 2>&1 &
   SPAWN_PID=$!      # wait_for_lab uses it to notice an emulator that fails at once
   return 0
