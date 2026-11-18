@@ -16,7 +16,7 @@ STORED AS TEXTFILE;
 LOAD DATA LOCAL INPATH '/home/hadoop/emp_data.csv' INTO TABLE employee;
 
 -- Complex HiveQL Query with Aggregation
-SELECT dept, COUNT(*) as total_emp, AVG(salary) as avg_sal
+SELECT dept, COUNT(*) AS total_emp, AVG(salary) AS avg_sal
 FROM employee
 GROUP BY dept
-HAVING avg_sal > 50000;
+HAVING AVG(salary) > 50000;

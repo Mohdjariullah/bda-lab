@@ -495,11 +495,19 @@ Copy of the script: `results/lab06/lab6_mongodb.js`
 GROUP BY query. 7b compiles `MaskSalaryUDF.java` and uses it in a query.
 
 ```
-Engineering     2       78500.0
+Finance 1       55000.0
+HR      2       55000.0
+IT      2       67500.0
 
 Alice   XXXX-CONFIDENTIAL
 Bob     XXXX-CONFIDENTIAL
+Charlie XXXX-CONFIDENTIAL
+David   XXXX-CONFIDENTIAL
+Eva     XXXX-CONFIDENTIAL
 ```
+
+The data is the five employees of the handbook (IT, Finance, HR). All three
+departments have an average salary above 50000, so all three are listed.
 
 This lab takes 2 to 3 minutes. Hive is slow to start. Wait.
 
@@ -524,31 +532,47 @@ Result file: `results/lab08/spark_output.txt`
 
 ### Lab 9 - Spark Structured Streaming
 
-Starts a feeder that writes one retail transaction file each second, then
-runs `structured_streaming.py`. You see tables like this, one for each micro-batch:
+Creates `/tmp/retail_stream_input`, puts `batch1.json` in it (the three
+transactions of the handbook) and runs `spark-submit structured_streaming.py`.
+The program reads the file as a stream, prints the result table and stops
+itself after 10 seconds.
 
 ```
 -------------------------------------------
 Batch: 0
 -------------------------------------------
-+--------------+------------------+
-|       Country|   sum(TotalSpend)|
-+--------------+------------------+
-|United Kingdom|            1245.8|
-|       Germany|             340.5|
-...
++--------------+---------------+
+|       Country|sum(TotalSpend)|
++--------------+---------------+
+|       Germany|          340.5|
+|        France|          185.2|
+|United Kingdom|         1245.8|
++--------------+---------------+
 ```
 
-The numbers change from run to run, because the feeder writes new files
-while Spark reads them. What matters: you see one or more `Batch:` tables
-with a total for each country.
+These are the totals of the manual: United Kingdom 1245.80, Germany 340.50,
+France 185.20. The order of the rows can differ.
 
-Result file: `results/lab09/feeder.log`
+Result file: `results/lab09/streaming_output.txt`
 
 ### Lab 10 - Kafka Event Streaming
 
-Starts ZooKeeper and Kafka (if needed), creates the topic `lab-events`, starts
-the consumer, then runs the producer.
+Starts ZooKeeper and Kafka (if needed) and creates the topic `lab-events`.
+Then it uses **two terminals**, as the manual says:
+
+- **Terminal 1 (a new window):** `python3 consumer.py`. It keeps listening.
+  Press Ctrl+C in that window when you are done; it is then a normal terminal.
+- **Terminal 2 (the lab window):** `python3 producer.py`.
+
+Terminal 2:
+
+```
+Produced: {'event_id': 1, 'device': 'sensor_A', 'status': 'NORMAL'}
+Produced: {'event_id': 2, 'device': 'sensor_B', 'status': 'WARNING'}
+Produced: {'event_id': 3, 'device': 'sensor_A', 'status': 'CRITICAL'}
+```
+
+Terminal 1:
 
 ```
 Listening for incoming stream events...
@@ -556,6 +580,9 @@ Received Event: 1 | Device: sensor_A | Status: NORMAL
 Received Event: 2 | Device: sensor_B | Status: WARNING
 Received Event: 3 | Device: sensor_A | Status: CRITICAL
 ```
+
+Without a desktop (or with `--here`) there is only one window: the consumer
+then runs in the background and its output is shown after the producer.
 
 Result file: `results/lab10/consumer.log`
 
@@ -797,7 +824,8 @@ LAB_RAW_OUTPUT=1          # 0 = lab window also shows [CHECK]/[STEP]/[FIX] lines
 - Another program (not Hadoop, Kafka or ZooKeeper) on port 9000, 9092 or
   2181 is reported, not stopped.
 - Lab 9's program has the folder `/tmp/retail_stream_input` written in it.
-  If another user ran Lab 9 on the same PC, that folder belongs to them.
+  If another user ran Lab 9 on the same PC, that folder belongs to them and
+  the lab stops with a message that says so.
 - Pig 0.17 has no MapReduce mode for Hadoop 3, so Lab 5 runs `pig -x local`.
 - Single machine only.
 

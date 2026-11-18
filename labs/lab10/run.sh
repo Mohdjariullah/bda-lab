@@ -46,26 +46,48 @@ lab_main() {
   # (de)serializers used in the manual programs; it is not an error
   export PYTHONWARNINGS="ignore::DeprecationWarning"
 
-  step 5 "Start the consumer in the background (it listens until stopped)"
-  show "python3 consumer.py > consumer.log &"
-  # unbuffered: python holds print() output back when it goes to a file, so the
-  # "Received Event" lines would only appear when the consumer exits
-  PYTHONUNBUFFERED=1 python3 consumer.py > consumer.log 2>&1 &
-  local cpid=$!
-  bg_track "$cpid"
-  sleep 4
-  kill -0 "$cpid" 2>/dev/null || { cat consumer.log; die "Consumer exited early"; }
+  # Terminal 1: the consumer. The manual runs it in its own terminal, where it
+  # keeps listening. With a desktop it gets its own window; without one (or if
+  # the window does not open) it runs in the background and its output is shown
+  # at the end.
+  step 5 "Start the consumer (Terminal 1)"
+  pkill -u "$(id -u)" -f "consumer\.py" 2>/dev/null     # a consumer left from an earlier run
+  rm -f consumer.log
+  export PYTHONUNBUFFERED=1
+  local own_window=0 cpid="" i=0
+  if [ -z "${LAB_INLINE:-}" ] && has_display; then
+    local rc="$STATE_DIR/lab${LAB_ID}_consumer.bashrc"
+    write_shell_rc "$rc"
+    if spawn_terminal "Lab 10 - Kafka consumer" "$CORE_DIR/sidewin.sh" "$rc" "$PWD/consumer.log" "python3 consumer.py" python3 consumer.py; then
+      while ! grep -q "Listening" consumer.log 2>/dev/null && [ "$i" -lt 30 ]; do sleep 1; i=$((i + 1)); done
+      grep -q "Listening" consumer.log 2>/dev/null && own_window=1
+    fi
+  fi
+  if [ "$own_window" = 1 ]; then
+    progress "[→] The consumer runs in its own window (Terminal 1). The producer runs in the lab window (Terminal 2)."
+    sleep 2
+  else
+    show "python3 consumer.py > consumer.log &"
+    python3 consumer.py > consumer.log 2>&1 &
+    cpid=$!
+    bg_track "$cpid"
+    sleep 4
+    kill -0 "$cpid" 2>/dev/null || { cat consumer.log; die "Consumer exited early"; }
+  fi
 
-  step 6 "Run the producer"
+  step 6 "Run the producer (Terminal 2)"
   run_t 120 python3 producer.py || die "Producer failed"
 
   step 7 "Consumer output"
-  local i=0
-  while ! grep -q "Received Event: 3" consumer.log && [ "$i" -lt 30 ]; do sleep 1; i=$((i + 1)); done
-  run cat consumer.log
+  i=0
+  while ! grep -q "Received Event: 3" consumer.log 2>/dev/null && [ "$i" -lt 30 ]; do sleep 1; i=$((i + 1)); done
+  # with two windows the consumer's lines are in its own window; without, show them here
+  [ "$own_window" = 1 ] || run cat consumer.log
   grep -q "Received Event: 3" consumer.log || die "The consumer did not receive the 3 events"
-  info "Stopping the consumer (it runs until stopped, like a real service)"
-  kill_pid "$cpid"
+  if [ -n "$cpid" ]; then
+    info "Stopping the consumer (it runs until stopped, like a real service)"
+    kill_pid "$cpid"
+  fi
   cp consumer.log "$LAB_RESULTS/" 2>/dev/null
   note_ok "Kafka producer sent 3 events and the consumer received them on topic $topic"
 }

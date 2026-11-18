@@ -48,19 +48,24 @@ export LAB_ID LAB_DIR LAB_LOG PROGRESS_FILE STATUS_FILE
 # the user's ~/.bashrc like every terminal, then sets the lab's environment
 # again (a ~/.bashrc with old exports would otherwise undo it), so commands
 # like "hdfs dfs -ls /" can be typed right away.
-open_shell() {
-  local rc="$STATE_DIR/lab$LAB_ID.bashrc" v
+# write_shell_rc FILE : a bash rc file with the lab's environment and folder
+write_shell_rc() {
+  local v
   {
     printf '[ -f %q ] && . %q\n' "$REAL_HOME/.bashrc" "$REAL_HOME/.bashrc"
     for v in JAVA_HOME HADOOP_HOME HADOOP_CONF_DIR HADOOP_LOG_DIR HADOOP_PID_DIR HADOOP_MAPRED_HOME \
              HADOOP_COMMON_HOME HADOOP_HDFS_HOME YARN_HOME HADOOP_CLASSPATH HDFS_NAMENODE_USER \
              HDFS_DATANODE_USER HDFS_SECONDARYNAMENODE_USER PIG_HOME HIVE_HOME HIVE_CONF_DIR \
              SPARK_HOME SPARK_CONF_DIR SPARK_LOCAL_IP PYSPARK_PYTHON PYSPARK_DRIVER_PYTHON \
-             KAFKA_HOME LOG_DIR PATH HOME PYTHONUSERBASE; do
+             KAFKA_HOME LOG_DIR PATH HOME REAL_HOME PYTHONUSERBASE PYTHONWARNINGS PYTHONUNBUFFERED LAB_PS1; do
       [ -n "${!v:-}" ] && printf 'export %s=%q\n' "$v" "${!v}"
     done
     printf 'cd %q\n' "${LAB_WORK:-$HOME}"
-  } > "$rc"
+  } > "$1"
+}
+open_shell() {
+  local rc="$STATE_DIR/lab$LAB_ID.bashrc"
+  write_shell_rc "$rc"
   trap - INT TERM HUP
   exec bash --rcfile "$rc" -i
 }

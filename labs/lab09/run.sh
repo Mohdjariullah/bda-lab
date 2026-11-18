@@ -6,6 +6,12 @@
 _write_quiet_log4j() {
   local d="$STATE_DIR/spark-conf-quiet"; mkdir -p "$d"
   export SPARK_CONF_DIR="$d"
+  # The program only streams for 10 seconds. With Spark's default 200 shuffle
+  # partitions the first micro-batch can take longer than that on a lab PC and
+  # no table is printed. These are settings of the PC, not of the program, so
+  # they live in the configuration folder and the command stays the manual's
+  # "spark-submit structured_streaming.py".
+  printf 'spark.sql.shuffle.partitions %s\nspark.ui.enabled false\n' "${1:-4}" > "$d/spark-defaults.conf"
   cat > "$d/log4j2.properties" <<'L4J'
 rootLogger.level = warn
 rootLogger.appenderRef.stdout.ref = console
@@ -57,44 +63,39 @@ _hide_shutdown_noise() {
 lab_main() {
   ensure_spark || die "Spark is not available"
   lab_workdir lab09
-  cp "$LAB_DIR/structured_streaming.py" "$LAB_DIR/retail_feeder.py" .
+  cp "$LAB_DIR/structured_streaming.py" .
   local sdir=/tmp/retail_stream_input
 
-  step 1 "Program source"
-  show "cat structured_streaming.py"; cat structured_streaming.py
-
-  step 2 "Prepare the stream directory $sdir"
-  pkill -f "retail_feeder.py" 2>/dev/null && warn "Stopped a feeder left from a previous run"
-  run rm -rf "$sdir"
+  step 1 "Create the input directory"
+  # only this lab's own folder, and only when it belongs to this user
+  if [ -e "$sdir" ] && [ ! -O "$sdir" ]; then
+    die "$sdir belongs to another user ($(stat -c %U "$sdir")). Ask that user to delete it, or restart the PC."
+  fi
+  rm -rf /tmp/retail_stream_input
   run mkdir -p "$sdir"
 
-  step 3 "Start the feeder (writes one JSON transaction file per second)"
-  show "python3 retail_feeder.py $sdir 40 > feeder.log &"
-  python3 retail_feeder.py "$sdir" 40 > feeder.log 2>&1 &
-  bg_track $!
-  sleep 2
-  run cat feeder.log
-  run ls "$sdir"
+  step 2 "Program source"
+  show "cat structured_streaming.py"; cat structured_streaming.py
 
-  step 4 "Run the streaming job (the program stops itself after 10 seconds of streaming)"
-  # The program only streams for 10 seconds. With Spark's default 200 shuffle partitions the
-  # first micro-batch can take longer than that on a lab PC and nothing gets printed, so the
-  # job is submitted with 4 partitions (a submit-time setting, the program is unchanged).
-  # The log4j files keep Spark's INFO chatter off the screen; the filter above hides the shutdown trace.
-  _write_quiet_log4j
-  run_pipe _hide_shutdown_noise timeout --foreground -k 5 300 "$SPARK_SUBMIT" \
-      --conf spark.sql.shuffle.partitions=4 --conf spark.ui.enabled=false \
-      structured_streaming.py || die "Streaming job failed"
+  step 3 "JSON input file (the three transactions that give the totals of the manual)"
+  cp "$LAB_DIR/batch1.json" "$sdir/batch1.json"
+  run cat "$sdir/batch1.json"
+
+  step 4 "Run the streaming program (it stops itself after 10 seconds)"
+  _write_quiet_log4j 4
+  run_pipe _hide_shutdown_noise timeout --foreground -k 5 300 "$SPARK_SUBMIT" structured_streaming.py \
+    || die "Streaming job failed"
   if ! log_has 'Batch: [0-9]+' 400; then
-    warn "No micro-batch table was printed in the 10 second window (slow machine)"
-    note_fix "Running the job once more now that Spark's JVM files are cached"
-    run_pipe _hide_shutdown_noise timeout --foreground -k 5 300 "$SPARK_SUBMIT" \
-      --conf spark.sql.shuffle.partitions=2 --conf spark.ui.enabled=false \
-      structured_streaming.py || die "Streaming job failed"
+    warn "No result table was printed in the 10 second window (slow machine)"
+    note_fix "Running the job once more now that Spark's files are cached"
+    _write_quiet_log4j 2
+    run_pipe _hide_shutdown_noise timeout --foreground -k 5 300 "$SPARK_SUBMIT" structured_streaming.py \
+      || die "Streaming job failed"
+    log_has 'Batch: [0-9]+' 400 || die "The streaming program printed no result table"
   fi
-
-  step 5 "Files the feeder produced"
-  run_sh "tail -n 5 feeder.log; ls $sdir | wc -l"
-  cp feeder.log "$LAB_RESULTS/" 2>/dev/null
-  note_ok "Structured Streaming aggregation (sum of TotalSpend per Country) completed"
+  # the totals of the manual must be in the output
+  tail -n 400 "$LAB_LOG" | grep -q '1245\.8' && tail -n 400 "$LAB_LOG" | grep -q '340\.5' && tail -n 400 "$LAB_LOG" | grep -q '185\.2' \
+    || die "The result table does not show the expected totals (1245.8, 340.5, 185.2)"
+  tail -n 400 "$LAB_LOG" | awk '/^Batch: /{keep=1} keep' > "$LAB_RESULTS/streaming_output.txt"
+  note_ok "Structured Streaming: United Kingdom 1245.8, Germany 340.5, France 185.2"
 }

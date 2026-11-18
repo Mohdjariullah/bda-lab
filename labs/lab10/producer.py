@@ -19,3 +19,4 @@ for record in data_stream:
     time.sleep(1)
 
 producer.flush()
+producer.close()

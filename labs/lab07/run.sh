@@ -203,7 +203,7 @@ lab_main() {
   _hive_script lab7b_udf.hql || die "Hive UDF query failed"
 
   step 6 "Save the query results to $LAB_RESULTS/hive_output.txt"
-  local q1="SELECT dept, COUNT(*) as total_emp, AVG(salary) as avg_sal FROM employee GROUP BY dept HAVING avg_sal > 50000;"
+  local q1="SELECT dept, COUNT(*) AS total_emp, AVG(salary) AS avg_sal FROM employee GROUP BY dept HAVING AVG(salary) > 50000;"
   local q2="SELECT name, mask_sal(CAST(salary AS STRING)) FROM employee;"
   {
     echo "-- $q1"

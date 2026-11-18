@@ -35,3 +35,5 @@ query = processed_df.writeStream \
 
 # Process stream for 10 seconds and stop
 query.awaitTermination(10)
+query.stop()
+spark.stop()
