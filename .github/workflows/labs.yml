@@ -1,9 +1,11 @@
 # Runs every lab on fresh Ubuntu machines, as a normal (non-root) user.
 # This is the proof that the runner works on a PC it has never seen.
+#
+# It does NOT run by itself (no Actions minutes are used on a push). To run it:
+# GitHub -> Actions -> "All labs on Ubuntu" -> "Run workflow".
 name: All labs on Ubuntu
 
 on:
-  push:
   workflow_dispatch:
 
 jobs:

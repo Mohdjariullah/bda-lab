@@ -831,11 +831,12 @@ LAB_RAW_OUTPUT=1          # 0 = lab window also shows [CHECK]/[STEP]/[FIX] lines
 
 ## Tested
 
-- **Automatically on GitHub** (`.github/workflows/labs.yml`): every push runs
+- **On GitHub's Ubuntu machines** (`.github/workflows/labs.yml`): runs
   `./lab-runner --here all` on a fresh Ubuntu 22.04 and a fresh Ubuntu 24.04
-  machine, as a normal user. First run: 11 passed, 0 failed on both (Python
+  machine, as a normal user. Result: 11 passed, 0 failed on both (Python
   3.10 and 3.12, Java 8 already on the machine and reused, everything else
-  downloaded).
+  downloaded). It only runs when started by hand (Actions, "All labs on
+  Ubuntu", "Run workflow"), never by itself.
 
 - **One lab at a time on an empty PC**: Lab 8 downloaded only Java 8 and
   Spark, Lab 5 only Pig, Lab 10 only Kafka, Labs 1 and 6 nothing.
